@@ -1,0 +1,89 @@
+services:
+  # ----------------------------------------------------------------------------
+  # Ollama Local LLM & Embedding Inference Server
+  # ----------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: helixmind-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - helixmind-net
+
+  # ----------------------------------------------------------------------------
+  # Model Initializer: Automatically pulls required LLM and Embedding models
+  # ----------------------------------------------------------------------------
+  ollama-init:
+    image: curlimages/curl:latest
+    container_name: helixmind-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: on-failure
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Ollama service..."
+        until curl -s http://ollama:11434/api/tags > /dev/null; do
+          sleep 2
+        done
+        echo "Pulling llama3.2:1b (Fast Agent & Reasoning LLM)..."
+        curl -s -X POST http://ollama:11434/api/pull -d '{"name": "llama3.2:1b"}'
+        echo "Pulling nomic-embed-text:latest (Biomedical Vector RAG Embeddings)..."
+        curl -s -X POST http://ollama:11434/api/pull -d '{"name": "nomic-embed-text:latest"}'
+        echo "Ollama model provisioning complete!"
+    networks:
+      - helixmind-net
+
+  # ----------------------------------------------------------------------------
+  # HelixMind Autonomous Scientific Research Platform (API + Frontend)
+  # ----------------------------------------------------------------------------
+  helixmind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: helixmind-app
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_TIMEOUT=120.0
+      - OLLAMA_DEFAULT_MODEL=llama3.2:1b
+      - OLLAMA_REASONING_MODEL=llama3.2:1b
+      - OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest
+      - NCBI_API_KEY=1742f98e7b166a1aa284df7b00c9ae14ba09
+      - NCBI_EMAIL=helixmind-research@example.com
+      - NCBI_TOOL=helixmind-platform
+      - DATA_DIR=/app/data
+    volumes:
+      # Persistent research monographs, papers, knowledge graphs, and PDB structures
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - helixmind-net
+
+volumes:
+  ollama_data:
+    driver: local
+
+networks:
+  helixmind-net:
+    driver: bridge

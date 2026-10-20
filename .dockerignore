@@ -1,0 +1,21 @@
+.git
+.gitignore
+.venv
+venv
+ENV
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+.DS_Store
+*.log
+
+# Frontend local dependencies
+frontend/node_modules
+frontend/dist
+
+# Local data cache
+.cache/
