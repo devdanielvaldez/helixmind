@@ -189,4 +189,7 @@ async def test_paper_generator_structure(tmp_path: Path):
     assert "Hypothesis 1: Dual checkpoint inhibition overcomes innate resistance" in content
     assert "## 3. Systematic Evidence Extraction" in content
     assert "## 4. Systems Biology & Epistemic Knowledge Graph Network" in content
-    assert "## 9. References" in content
+    assert "## 6. DepMap Functional Genomics" in content
+    assert "## 7. In-Silico De Novo Lead Optimization" in content
+    assert "## 8. Virtual Patient Clinical Trial Simulation" in content
+    assert "## 12. References" in content

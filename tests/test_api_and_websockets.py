@@ -57,6 +57,20 @@ def test_websocket_global_channel():
         assert "Connected to global" in msg["message"]
 
 
+def test_insilico_endpoints():
+    mol_res = client.get("/api/insilico/molecule/tamoxifen")
+    assert mol_res.status_code == 200
+    mol_data = mol_res.json()
+    assert mol_data["molecular_weight"] > 300
+    assert mol_data["lipinski_pass"] is True
+
+    dock_res = client.get("/api/insilico/docking?ligand=tamoxifen&target=HER2")
+    assert dock_res.status_code == 200
+    dock_data = dock_res.json()
+    assert dock_data["binding_affinity_delta_g"] < -5.0
+    assert "pdb_id" in dock_data
+
+
 @pytest.mark.asyncio
 async def test_websocket_manager_broadcast():
     inv_id = "INV-TEST-WS"
