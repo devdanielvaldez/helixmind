@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -131,3 +131,9 @@ class ResearchReport(BaseModel):
     depmap_evaluations: List[Dict[str, Any]] = Field(default_factory=list)
     denovo_analogs: List[Dict[str, Any]] = Field(default_factory=list)
     clinical_simulation: Optional[Dict[str, Any]] = None
+    fda_safety: Optional[Dict[str, Any]] = None
+    clinvar_stratification: Optional[Dict[str, Any]] = None
+    tme_microenvironment: Optional[Dict[str, Any]] = None
+
+
+ResearchReport.model_rebuild()

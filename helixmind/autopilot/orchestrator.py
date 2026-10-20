@@ -30,10 +30,13 @@ from helixmind.hypotheses.models import (
 from helixmind.insilico import (
     ClinicalSimulator,
     ClinicalTrialSimulationReport,
+    ClinVarStratifier,
     DeNovoGenerator,
     DeNovoMoleculeCandidate,
     DepMapGeneEffect,
     DepMapVerifier,
+    FDAPharmacovigilance,
+    TMEMapper,
 )
 from helixmind.journal import ResearchJournal
 from helixmind.llm.ollama_client import OllamaClient
@@ -68,7 +71,7 @@ class AutoPilotOrchestrator:
         topic: str,
         max_papers: int = 5,
         max_trials: int = 4,
-        depth: str = "standard",
+        depth: str = "deep",
         model: Optional[str] = None,
         on_progress: Optional[Callable[[str], None]] = None,
     ) -> ResearchReport:
@@ -82,12 +85,13 @@ class AutoPilotOrchestrator:
         inv_id = f"INV-{int(datetime.now().timestamp())}"
 
         depth_cycles = {
-            "quick": 1,
-            "standard": 1,
             "deep": 2,
             "exhaustive": 3,
+            "institutional": 4,
+            "standard": 2,
+            "quick": 1,
         }
-        num_cycles = depth_cycles.get(depth.lower(), 1)
+        num_cycles = depth_cycles.get(depth.lower(), 2)
 
         # Initialize Research Journal & Knowledge Graph
         journal = ResearchJournal(investigation_id=inv_id, topic=topic)
@@ -400,7 +404,7 @@ class AutoPilotOrchestrator:
         )
 
         raw_hypotheses: List[ScientificHypothesis] = []
-        num_hypotheses = 1 if depth == "quick" else min(2, self.settings.default_max_hypotheses)
+        num_hypotheses = min(2, self.settings.default_max_hypotheses)
 
         for h_i in range(1, num_hypotheses + 1):
             notify(f"Dr. Hypothesis generating Hypothesis {h_i}/{num_hypotheses} (Part {h_i})...")
@@ -596,7 +600,20 @@ class AutoPilotOrchestrator:
         # ---------------------------------------------------------------------
         notify("De Novo Molecular Generator designing optimized analogs and computing SAscore...")
         denovo_gen = DeNovoGenerator()
-        candidate_parent = strategy.clinical_trials_intervention or (entities_found[0] if entities_found else "Tamoxifen")
+
+        # Resolve an authentic pharmaceutical lead compound from discoveries or clinical interventions
+        from helixmind.insilico.chemoinformatics import ChemoinformaticsEngine
+        candidate_parent = None
+        if strategy.clinical_trials_intervention and len(strategy.clinical_trials_intervention) > 2 and ChemoinformaticsEngine.resolve_smiles(strategy.clinical_trials_intervention):
+            candidate_parent = strategy.clinical_trials_intervention
+        else:
+            for ent in entities_found:
+                if len(ent) > 2 and ChemoinformaticsEngine.resolve_smiles(ent) is not None:
+                    candidate_parent = ent
+                    break
+        if not candidate_parent:
+            candidate_parent = "Tamoxifen" if any(w in topic.lower() for w in ["breast", "mama", "erbb", "her2"]) else "Temozolomide"
+
         denovo_analogs: List[DeNovoMoleculeCandidate] = denovo_gen.generate_optimized_analogs(
             parent_drug_name=candidate_parent,
             max_analogs=2,
@@ -625,6 +642,46 @@ class AutoPilotOrchestrator:
         )
 
         # ---------------------------------------------------------------------
+        # 8e. Real-World FDA Pharmacovigilance Surveillance (openFDA FAERS)
+        # ---------------------------------------------------------------------
+        notify("Spawning Dr. Pharmacovigilance to monitor human adverse events via openFDA FAERS...")
+        journal.record_agent_spawn("Dr. Pharmacovigilance", "Clinical Safety & Surveillance Specialist", "Monitor post-marketing human adverse reactions", chosen_model)
+        fda_client = FDAPharmacovigilance()
+        fda_report = await fda_client.fetch_safety_profile_async(candidate_parent)
+        journal.log(
+            "Dr. Pharmacovigilance",
+            "FDA Safety Surveillance",
+            f"Analyzed {fda_report.total_patient_reports:,} FAERS human reports for {candidate_parent}. Verdict: {fda_report.clinical_safety_verdict[:90]}",
+            evidence_id="FDA:FAERS",
+        )
+
+        # ---------------------------------------------------------------------
+        # 8f. NCBI ClinVar Genomic Patient Stratification (Dr. ClinVar)
+        # ---------------------------------------------------------------------
+        notify("Spawning Dr. ClinVar to identify pathogenic variants and precision inclusion criteria...")
+        journal.record_agent_spawn("Dr. ClinVar", "Clinical Genomics & Molecular Pathologist", "Stratify precision oncology patient cohorts", chosen_model)
+        clinvar_stratifier = ClinVarStratifier()
+        clinvar_report = await clinvar_stratifier.stratify_target_async(targets_to_check[0], target_condition=strategy.primary_condition)
+        journal.log(
+            "Dr. ClinVar",
+            "Genomic Stratification",
+            f"Analyzed {clinvar_report.total_pathogenic_variants_in_db} pathogenic variants in {clinvar_report.target_gene}. Biomarker criteria: {clinvar_report.responder_biomarker_signature[:100]}",
+            evidence_id=f"ClinVar:{clinvar_report.target_gene}",
+        )
+
+        # ---------------------------------------------------------------------
+        # 8g. Single-Cell Tumor Microenvironment & Ligand-Receptor Interactome (Dr. TME)
+        # ---------------------------------------------------------------------
+        notify("Spawning Dr. TME to map single-cell cell types and paracrine ligand-receptor communications...")
+        journal.record_agent_spawn("Dr. TME", "Single-Cell Transcriptomics & Microenvironment Specialist", "Resolve cell-cell paracrine signaling", chosen_model)
+        tme_report = TMEMapper.analyze_microenvironment(targets_to_check, condition=strategy.primary_condition)
+        journal.log(
+            "Dr. TME",
+            "Single-Cell Microenvironment",
+            f"Subtype: {tme_report.microenvironment_subtype} | Active paracrine axes: {len(tme_report.active_ligand_receptor_axes)}",
+        )
+
+        # ---------------------------------------------------------------------
         # 9. Author Formal Scientific Paper in Markdown (Dr. Editor)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Editor to author publication-grade Scientific Paper in Markdown...")
@@ -647,6 +704,9 @@ class AutoPilotOrchestrator:
             depmap_evaluations=depmap_evals,
             denovo_analogs=denovo_analogs,
             clinical_simulation=trial_sim,
+            fda_safety=fda_report,
+            clinvar_stratification=clinvar_report,
+            tme_microenvironment=tme_report,
         )
         journal.log("Dr. Editor", "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
         await emit(
@@ -678,6 +738,9 @@ class AutoPilotOrchestrator:
             depmap_evaluations=[d.model_dump() for d in depmap_evals],
             denovo_analogs=[a.model_dump() for a in denovo_analogs],
             clinical_simulation=trial_sim.model_dump(),
+            fda_safety=fda_report.model_dump(),
+            clinvar_stratification=clinvar_report.model_dump(),
+            tme_microenvironment=tme_report.model_dump(),
         )
 
         # Persist report, journal, and graph
