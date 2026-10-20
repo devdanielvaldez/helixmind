@@ -126,3 +126,5 @@ class ResearchReport(BaseModel):
     clinical_landscape_summary: str = ""
     critical_synthesis: str = ""
     next_research_milestones: List[str] = Field(default_factory=list)
+    paper_markdown_path: Optional[str] = None
+    knowledge_graph_summary: Optional[str] = None
