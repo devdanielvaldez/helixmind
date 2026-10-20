@@ -103,12 +103,12 @@ class DeNovoGenerator:
         transformations = [
             (
                 "Fluorine Bioisosteric C-H Block",
-                "[c:1][H:2]>>[c:1][F]",
+                "[c:1][H]>>[c:1][F]",
                 "Introduction of fluoro-substituents at aromatic metabolic hotspots blocks CYP3A4 oxidative degradation and enhances metabolic stability.",
             ),
             (
                 "Morpholine Solubility & Basic Center Optimization",
-                "[c:1][H:2]>>[c:1]N1CCOCC1",
+                "[c:1][H]>>[c:1]N1CCOCC1",
                 "Incorporation of a morpholine heterocycle optimizes topological polar surface area (TPSA), improving aqueous solubility without sacrificing permeability.",
             ),
             (
@@ -118,7 +118,7 @@ class DeNovoGenerator:
             ),
             (
                 "Trifluoromethyl (CF3) Lipophilic Pocket Optimization",
-                "[c:1][H:2]>>[c:1]C(F)(F)F",
+                "[c:1][H]>>[c:1]C(F)(F)F",
                 "Addition of trifluoromethyl group boosts hydrophobic desolvation energy inside deep receptor pockets.",
             ),
         ]
