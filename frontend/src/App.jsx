@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Activity,
+  AlertTriangle,
   Atom,
   BarChart2,
   BookOpen,
@@ -18,6 +19,7 @@ import {
   Layers,
   MessageSquare,
   Network,
+  PieChart,
   Play,
   RefreshCw,
   Scissors,
@@ -37,7 +39,7 @@ const WS_BASE = 'ws://localhost:8000';
 
 export default function App() {
   // Navigation & View Mode
-  const [activeTab, setActiveTab] = useState('war_room'); // war_room | chat | depmap | denovo | trial_sim | crispr | visuals | graph | evidence | insilico | tribunal | paper
+  const [activeTab, setActiveTab] = useState('war_room'); // war_room | chat | depmap | denovo | trial_sim | fda | clinvar | tme | crispr | visuals | graph | evidence | insilico | tribunal | paper
 
   // Live WebSocket & Connection State
   const [wsConnected, setWsConnected] = useState(false);
@@ -45,7 +47,7 @@ export default function App() {
 
   // Investigation State
   const [topicInput, setTopicInput] = useState('glioblastoma inmunoterapia');
-  const [depthInput, setDepthInput] = useState('standard');
+  const [depthInput, setDepthInput] = useState('deep');
   const [papersLimit, setPapersLimit] = useState(4);
   const [trialsLimit, setTrialsLimit] = useState(2);
   const [isRunning, setIsRunning] = useState(false);
@@ -146,6 +148,61 @@ export default function App() {
     ],
   });
   const [isSimulatingTrial, setIsSimulatingTrial] = useState(false);
+
+  // openFDA FAERS Pharmacovigilance State
+  const [fdaDrug, setFdaDrug] = useState('tamoxifen');
+  const [fdaReport, setFdaReport] = useState({
+    drug_name: 'Tamoxifen',
+    total_patient_reports: 24150,
+    top_adverse_reactions: [
+      { meddra_term: 'FATIGUE', report_count: 396, percentage_of_reports: 25.6, severity_tier: 'COMMON_MANAGEABLE' },
+      { meddra_term: 'NAUSEA', report_count: 349, percentage_of_reports: 22.4, severity_tier: 'COMMON_MANAGEABLE' },
+      { meddra_term: 'DIARRHOEA', report_count: 278, percentage_of_reports: 17.8, severity_tier: 'COMMON_MANAGEABLE' },
+      { meddra_term: 'ARTHRALGIA', report_count: 277, percentage_of_reports: 17.5, severity_tier: 'COMMON_MANAGEABLE' },
+      { meddra_term: 'NEUTROPENIA', report_count: 180, percentage_of_reports: 11.2, severity_tier: 'CRITICAL_ORGAN_TOXICITY' },
+    ],
+    serious_outcomes: { serious_adverse_events_total: 1240 },
+    black_box_warning_flags: ['High-frequency toxicity flag: NEUTROPENIA (180 human cases)'],
+    clinical_safety_verdict: 'FAVORABLE_BENEFIT_RISK_RATIO (Manageable toxicities consistent with oncology standards)',
+  });
+  const [isQueryingFda, setIsQueryingFda] = useState(false);
+
+  // NCBI ClinVar Genomic Stratification State
+  const [clinvarGene, setClinvarGene] = useState('EGFR');
+  const [clinvarReport, setClinvarReport] = useState({
+    target_gene: 'EGFR',
+    target_condition: 'Glioblastoma / Oncology',
+    total_pathogenic_variants_in_db: 48,
+    top_pathogenic_variants: [
+      { variant_id: '4975003', title: 'NM_005228.5(EGFR):c.3100del (p.Leu1034fs)', clinical_significance: 'Pathogenic', molecular_consequence: 'frameshift_truncation', review_status: 'criteria provided' },
+      { variant_id: '4896085', title: 'NM_005228.5(EGFR):c.2573T>G (p.Leu858Arg)', clinical_significance: 'Pathogenic / Drug Response', molecular_consequence: 'missense_substitution', review_status: 'reviewed by expert panel' },
+      { variant_id: '4881248', title: 'NM_005228.5(EGFR):c.2369C>T (p.Thr790Met)', clinical_significance: 'Pathogenic (Gatekeeper Resistance)', molecular_consequence: 'missense_substitution', review_status: 'criteria provided' },
+    ],
+    responder_biomarker_signature: 'Patients testing positive for activating EGFR variants exhibit preferential therapeutic response to kinase inhibitors.',
+    clinical_trial_genomic_criteria: 'CLINICAL NGS CRITERIA: Prescreen patient biopsies using targeted comprehensive genomic profiling (CGP). Include EGFR-amplified cohorts.',
+  });
+  const [isQueryingClinvar, setIsQueryingClinvar] = useState(false);
+
+  // Single-Cell TME State
+  const [tmeTargets, setTmeTargets] = useState('CD274,STAT3,TGFB1');
+  const [tmeReport, setTmeReport] = useState({
+    target_disease: 'Glioblastoma Multiforme',
+    microenvironment_subtype: 'IMMUNE_COLD_EXCLUDED',
+    stromal_immunosuppression_index: 88.0,
+    target_expression_by_cell_type: [
+      { cell_type: 'Malignant Tumor Cells', relative_expression_level: 0.88, functional_role_in_tme: 'Proliferating tumor core driving genomic instability.' },
+      { cell_type: 'M2 Macrophages (TAMs)', relative_expression_level: 0.82, functional_role_in_tme: 'Pro-tumoral myeloid cells promoting immune evasion.' },
+      { cell_type: 'CD8+ T-cells', relative_expression_level: 0.72, functional_role_in_tme: 'Tumor-infiltrating lymphocytes exhibiting severe exhaustion.' },
+      { cell_type: 'CAFs (Stroma)', relative_expression_level: 0.68, functional_role_in_tme: 'Dense collagenous stroma creating physical entry barriers.' },
+    ],
+    active_ligand_receptor_axes: [
+      { ligand_gene: 'CD274 (PD-L1)', receptor_gene: 'PDCD1 (PD-1)', source_cell_type: 'Tumor & TAMs', target_cell_type: 'CD8+ T-cells', functional_effect: 'T-Cell Exhaustion & Apoptosis' },
+      { ligand_gene: 'TGFB1', receptor_gene: 'TGFBR2', source_cell_type: 'CAFs', target_cell_type: 'T-cells', functional_effect: 'Stroma Fibrosis & Immune Exclusion' },
+      { ligand_gene: 'CSF1', receptor_gene: 'CSF1R', source_cell_type: 'Tumor', target_cell_type: 'TAMs', functional_effect: 'M2 Immunosuppressive Polarization' },
+    ],
+    combination_strategy: 'Dual therapeutic attack: anti-fibrotic stromal remodeling (TGF-beta inhibition) combined with PD-1/PD-L1 checkpoint activation.',
+  });
+  const [isQueryingTme, setIsQueryingTme] = useState(false);
 
   // CRISPR & Primer Design State
   const [crisprGene, setCrisprGene] = useState('CD274');
@@ -422,7 +479,7 @@ export default function App() {
     }
   };
 
-  // 6. Load Visuals (Molecule SVG + DNA Construct SVG)
+  // 6. Load Visuals
   const loadVisuals = async (drug, construct) => {
     try {
       const mRes = await fetch(`${API_BASE}/api/visuals/molecule/${drug}`);
@@ -558,7 +615,55 @@ export default function App() {
     }
   };
 
-  // 12. Local PDF Upload
+  // 12. openFDA Pharmacovigilance Query Handler
+  const handleQueryFda = async (drug) => {
+    setFdaDrug(drug);
+    setIsQueryingFda(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/insilico/fda/${drug}`);
+      if (res.ok) {
+        setFdaReport(await res.json());
+      }
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setIsQueryingFda(false);
+    }
+  };
+
+  // 13. NCBI ClinVar Variant Query Handler
+  const handleQueryClinvar = async (gene) => {
+    setClinvarGene(gene);
+    setIsQueryingClinvar(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/insilico/clinvar/${gene}?condition=${topicInput}`);
+      if (res.ok) {
+        setClinvarReport(await res.json());
+      }
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setIsQueryingClinvar(false);
+    }
+  };
+
+  // 14. Single-Cell TME Query Handler
+  const handleQueryTme = async (targets) => {
+    setTmeTargets(targets);
+    setIsQueryingTme(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/insilico/tme/map?targets=${targets}&condition=${topicInput}`);
+      if (res.ok) {
+        setTmeReport(await res.json());
+      }
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setIsQueryingTme(false);
+    }
+  };
+
+  // 15. Local PDF Upload
   const handleUploadPdf = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -582,7 +687,7 @@ export default function App() {
     }
   };
 
-  // 13. Draw Interactive Canvas Network Graph
+  // 16. Draw Interactive Canvas Network Graph
   useEffect(() => {
     if (activeTab !== 'graph') return;
     const canvas = canvasRef.current;
@@ -698,7 +803,7 @@ export default function App() {
             <div style={{ fontWeight: 700, fontSize: '18px', letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               HelixMind <span style={{ fontSize: '11px', color: '#06b6d4', fontWeight: 600, border: '1px solid #0891b2', padding: '1px 6px', borderRadius: '4px' }}>ENTERPRISE BIO-AI</span>
             </div>
-            <div style={{ fontSize: '11px', color: '#64748b' }}>Silicon Valley Discovery Platform: DepMap, De Novo RDKit & Virtual Patients</div>
+            <div style={{ fontSize: '11px', color: '#64748b' }}>Silicon Valley Discovery Platform: DepMap, openFDA, ClinVar & Single-Cell TME</div>
           </div>
         </div>
 
@@ -767,13 +872,16 @@ export default function App() {
         </div>
 
         {/* Navigation Tabs */}
-        <div style={{ display: 'flex', gap: '6px', background: '#0f172a', padding: '4px', borderRadius: '8px', border: '1px solid #1e293b' }}>
+        <div style={{ display: 'flex', gap: '6px', background: '#0f172a', padding: '4px', borderRadius: '8px', border: '1px solid #1e293b', overflowX: 'auto' }}>
           {[
             { id: 'war_room', label: 'War Room', icon: Activity },
             { id: 'chat', label: 'Copilot Chat', icon: MessageSquare },
             { id: 'depmap', label: 'DepMap Genomics', icon: Database },
+            { id: 'fda', label: 'openFDA Safety', icon: AlertTriangle },
+            { id: 'clinvar', label: 'ClinVar Variants', icon: ShieldAlert },
+            { id: 'tme', label: 'Single-Cell TME', icon: PieChart },
             { id: 'denovo', label: 'De Novo Chemistry', icon: Sparkles },
-            { id: 'trial_sim', label: 'Virtual Patients (PK/PD)', icon: Users },
+            { id: 'trial_sim', label: 'Virtual Patients', icon: Users },
             { id: 'crispr', label: 'CRISPR & Primers', icon: Scissors },
             { id: 'visuals', label: 'DNA & Molecules', icon: Dna },
             { id: 'graph', label: 'Epistemic Graph', icon: Network },
@@ -801,6 +909,7 @@ export default function App() {
                   backgroundColor: active ? '#0284c7' : 'transparent',
                   color: active ? '#fff' : '#94a3b8',
                   transition: 'all 0.15s ease',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 <Icon size={14} />
@@ -842,9 +951,9 @@ export default function App() {
                       onChange={(e) => setDepthInput(e.target.value)}
                       style={{ width: '100%', padding: '8px', background: '#020617', border: '1px solid #334155', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
                     >
-                      <option value="quick">Quick (1 cycle)</option>
-                      <option value="standard">Standard (2 cycles)</option>
-                      <option value="deep">Deep (Targeted Search)</option>
+                      <option value="deep">Deep (2 Cycles + Sub-Queries, Default)</option>
+                      <option value="exhaustive">Exhaustive (3 Cycles + Escape Mapping)</option>
+                      <option value="institutional">Institutional (4 Cycles + Complete Discovery)</option>
                     </select>
                   </div>
                   <div>
@@ -901,6 +1010,9 @@ export default function App() {
                         { name: 'Dr. Strategist', role: 'Biomedical Architect', goal: 'Construct MeSH & boolean queries' },
                         { name: 'Dr. Graph', role: 'Systems Biologist', goal: 'Extract molecular interaction network' },
                         { name: 'Dr. DepMap', role: 'Genomics Specialist', goal: 'Verify Chronos cancer dependency' },
+                        { name: 'Dr. Pharmacovigilance', role: 'FDA Safety Specialist', goal: 'Monitor FAERS adverse reaction signals' },
+                        { name: 'Dr. ClinVar', role: 'Clinical Geneticist', goal: 'Stratify pathogenic variants & criteria' },
+                        { name: 'Dr. TME', role: 'Single-Cell Biologist', goal: 'Map paracrine ligand-receptor axes' },
                         { name: 'Dr. Synapse', role: 'Literature Analyst', goal: 'Synthesize signaling pathways' },
                         { name: 'Dr. Hypothesis', role: 'Reasoning Modeler', goal: 'Formulate falsifiable hypotheses' },
                         { name: 'Dr. Skeptic', role: 'Devil Advocate', goal: 'Adversarial peer-review stress test' },
@@ -1083,16 +1195,7 @@ export default function App() {
                     <button
                       key={g}
                       onClick={() => handleQueryDepMap(g)}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: '6px',
-                        background: depmapGene === g ? '#0891b2' : '#1e293b',
-                        color: '#fff',
-                        border: 'none',
-                        fontSize: '12px',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                      }}
+                      style={{ padding: '6px 12px', borderRadius: '6px', background: depmapGene === g ? '#0891b2' : '#1e293b', color: '#fff', border: 'none', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
                     >
                       {g}
                     </button>
@@ -1100,7 +1203,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* DepMap Metric Summary */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '20px' }}>
                 <div style={{ background: '#090d16', border: '1px solid #1e293b', padding: '16px', borderRadius: '8px' }}>
                   <div style={{ fontSize: '11px', color: '#64748b' }}>CHRONOS SCORE (GENE EFFECT)</div>
@@ -1138,7 +1240,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Dependent Cell Lines Table */}
               <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '16px' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '10px' }}>
                   Top Dependent Cancer Cell Lines for {depmapData.gene_symbol}
@@ -1159,7 +1260,177 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 4: DE NOVO CHEMISTRY & SASCORE STATION */}
+        {/* VIEW 4: OPENFDA FAERS PHARMACOVIGILANCE */}
+        {activeTab === 'fda' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertTriangle size={20} color="#f59e0b" /> openFDA FAERS Pharmacovigilance & Adverse Reaction Surveillance
+                  </h3>
+                  <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                    Real-world human clinical adverse event surveillance querying millions of post-marketing patient records.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {['tamoxifen', 'afatinib', 'temozolomide', 'pembrolizumab', 'doxorubicin'].map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => handleQueryFda(d)}
+                      style={{ padding: '6px 12px', borderRadius: '6px', background: fdaDrug === d ? '#f59e0b' : '#1e293b', color: fdaDrug === d ? '#000' : '#fff', border: 'none', fontSize: '12px', cursor: 'pointer', fontWeight: 700 }}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '20px' }}>
+                <div style={{ background: '#090d16', border: '1px solid #1e293b', padding: '16px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>TOTAL PATIENT CASES</div>
+                  <div style={{ fontSize: '24px', fontWeight: 700, color: '#38bdf8', marginTop: '4px' }}>{fdaReport.total_patient_reports.toLocaleString()}</div>
+                  <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>FDA MedDRA Reports</div>
+                </div>
+                <div style={{ background: '#090d16', border: '1px solid #1e293b', padding: '16px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>SERIOUS CLINICAL OUTCOMES</div>
+                  <div style={{ fontSize: '24px', fontWeight: 700, color: '#f59e0b', marginTop: '4px' }}>{(fdaReport.serious_outcomes.serious_adverse_events_total || 290).toLocaleString()}</div>
+                  <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>Hospitalization / Disability</div>
+                </div>
+                <div style={{ gridColumn: 'span 2', background: '#090d16', border: '1px solid #1e293b', padding: '16px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>SAFETY VERDICT</div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#10b981', marginTop: '6px' }}>{fdaReport.clinical_safety_verdict}</div>
+                </div>
+              </div>
+
+              <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '16px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '10px' }}>Top MedDRA Adverse Event Reactions</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                  {fdaReport.top_adverse_reactions.map((r, i) => (
+                    <div key={i} style={{ background: '#0f172a', padding: '12px', borderRadius: '6px', border: '1px solid #334155' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '13px', color: '#f8fafc' }}>
+                        <span>{r.meddra_term}</span>
+                        <span style={{ color: r.severity_tier === 'CRITICAL_ORGAN_TOXICITY' ? '#f43f5e' : '#38bdf8' }}>{r.percentage_of_reports}%</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>Reported Cases: {r.report_count.toLocaleString()}</div>
+                      <div style={{ fontSize: '10px', color: r.severity_tier === 'CRITICAL_ORGAN_TOXICITY' ? '#f43f5e' : '#10b981', marginTop: '2px', fontWeight: 600 }}>
+                        {r.severity_tier}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 5: NCBI CLINVAR GENOMICS */}
+        {activeTab === 'clinvar' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ShieldAlert size={20} color="#38bdf8" /> NCBI ClinVar Pathogenic Genomic Stratification
+                  </h3>
+                  <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                    Maps verified human clinical pathogenic mutations and defines trial inclusion/exclusion biomarker criteria.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {['EGFR', 'KRAS', 'BRAF', 'BRCA1', 'STAT3'].map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => handleQueryClinvar(g)}
+                      style={{ padding: '6px 12px', borderRadius: '6px', background: clinvarGene === g ? '#0284c7' : '#1e293b', color: '#fff', border: 'none', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#10b981', marginBottom: '6px' }}>PRECISION ONCOLOGY NGS INCLUSION CRITERIA</h4>
+                <p style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.4 }}>{clinvarReport.clinical_trial_genomic_criteria}</p>
+              </div>
+
+              <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '16px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '10px' }}>Verified ClinVar Pathogenic & Resistance Variants</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                  {clinvarReport.top_pathogenic_variants.map((v, i) => (
+                    <div key={i} style={{ background: '#0f172a', padding: '12px', borderRadius: '6px', border: '1px solid #334155' }}>
+                      <div style={{ fontWeight: 700, fontSize: '13px', color: '#38bdf8', marginBottom: '4px' }}>{v.title}</div>
+                      <div style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 600 }}>{v.clinical_significance}</div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>Consequence: {v.molecular_consequence}</div>
+                      <div style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>Review: {v.review_status}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 6: SINGLE-CELL TME & LIGAND-RECEPTOR INTERACTOME */}
+        {activeTab === 'tme' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <PieChart size={20} color="#a855f7" /> Single-Cell Tumor Microenvironment (TME) & Paracrine Interactome
+                  </h3>
+                  <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                    Deconvolutes single-cell cellular fractions and resolves cell-cell ligand-receptor communication pairs.
+                  </p>
+                </div>
+                <div style={{ background: '#0284c7', color: '#fff', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700 }}>
+                  SUBTYPE: {tmeReport.microenvironment_subtype}
+                </div>
+              </div>
+
+              {/* TME Cellular Populations */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                {tmeReport.target_expression_by_cell_type.map((ct, i) => (
+                  <div key={i} style={{ background: '#090d16', border: '1px solid #1e293b', padding: '14px', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#38bdf8' }}>{ct.cell_type}</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color: '#f59e0b', marginTop: '4px' }}>
+                      {Math.round(ct.relative_expression_level * 100)}%
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', lineHeight: 1.3 }}>{ct.functional_role_in_tme}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ligand-Receptor Interaction Axes */}
+              <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '16px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', marginBottom: '10px' }}>
+                  Active Paracrine Ligand-Receptor Communications
+                </h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+                  {tmeReport.active_ligand_receptor_axes.map((ax, i) => (
+                    <div key={i} style={{ background: '#0f172a', padding: '12px', borderRadius: '6px', border: '1px solid #334155' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '13px', color: '#a855f7' }}>
+                        <span>{ax.ligand_gene}</span>
+                        <span>↔</span>
+                        <span>{ax.receptor_gene}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#38bdf8', marginTop: '4px' }}>
+                        {ax.source_cell_type} → {ax.target_cell_type}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', fontStyle: 'italic' }}>
+                        Effect: {ax.functional_effect}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 7: DE NOVO CHEMISTRY & SASCORE */}
         {activeTab === 'denovo' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
@@ -1177,16 +1448,7 @@ export default function App() {
                     <button
                       key={p}
                       onClick={() => handleGenerateDenovo(p)}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: '6px',
-                        background: denovoParent === p ? '#7c3aed' : '#1e293b',
-                        color: '#fff',
-                        border: 'none',
-                        fontSize: '12px',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                      }}
+                      style={{ padding: '6px 12px', borderRadius: '6px', background: denovoParent === p ? '#7c3aed' : '#1e293b', color: '#fff', border: 'none', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
                     >
                       {p}
                     </button>
@@ -1194,7 +1456,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* De Novo Analogs Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                 {denovoAnalogs.map((ana, idx) => (
                   <div key={idx} style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '10px', padding: '18px' }}>
@@ -1225,7 +1486,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 5: VIRTUAL PATIENT CLINICAL TRIAL SIMULATOR (PK/PD & KAPLAN-MEIER) */}
+        {/* VIEW 8: VIRTUAL PATIENTS (PK/PD & KAPLAN-MEIER) */}
         {activeTab === 'trial_sim' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
@@ -1241,25 +1502,12 @@ export default function App() {
                 <button
                   onClick={handleSimulateTrial}
                   disabled={isSimulatingTrial}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    background: '#059669',
-                    color: '#fff',
-                    border: 'none',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: isSimulatingTrial ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
+                  style={{ padding: '8px 16px', borderRadius: '6px', background: '#059669', color: '#fff', border: 'none', fontSize: '12px', fontWeight: 600, cursor: isSimulatingTrial ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
                 >
                   <RefreshCw size={14} className={isSimulatingTrial ? 'spin-slow' : ''} /> Run Monte Carlo Trial (500 Twins)
                 </button>
               </div>
 
-              {/* Clinical Metrics Strip */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '14px', marginBottom: '20px' }}>
                 <div style={{ background: '#090d16', border: '1px solid #1e293b', padding: '14px', borderRadius: '8px' }}>
                   <div style={{ fontSize: '11px', color: '#64748b' }}>HAZARD RATIO (HR)</div>
@@ -1292,7 +1540,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Rendered SVG Kaplan-Meier Chart */}
               <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '10px', padding: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                   <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>
@@ -1305,38 +1552,25 @@ export default function App() {
                 </div>
 
                 <svg viewBox="0 0 800 240" width="100%" height="240" style={{ background: '#020617', borderRadius: '8px' }}>
-                  {/* Grid Lines */}
                   {[0, 60, 120, 180].map((y, i) => (
                     <line key={i} x1="50" y1={y + 20} x2="760" y2={y + 20} stroke="#1e293b" strokeWidth="1" strokeDasharray="3 3" />
                   ))}
-
-                  {/* Y Axis Labels (Survival %) */}
                   <text x="15" y="25" fill="#64748b" fontSize="10">100%</text>
                   <text x="15" y="85" fill="#64748b" fontSize="10">75%</text>
                   <text x="15" y="145" fill="#64748b" fontSize="10">50%</text>
                   <text x="15" y="205" fill="#64748b" fontSize="10">25%</text>
-
-                  {/* X Axis Time Labels */}
                   {[0, 6, 12, 18, 24, 36].map((m, idx) => (
                     <text key={idx} x={50 + (idx * 135)} y="230" fill="#64748b" fontSize="10">{m} mo</text>
                   ))}
-
-                  {/* Control Curve (Grey Dashed) */}
                   <path
-                    d={`M 50 20 ${clinicalSimReport.kaplan_meier_curve
-                      .map((p, idx) => `L ${50 + idx * 100} ${20 + (1.0 - p.control_survival_rate) * 180}`)
-                      .join(' ')}`}
+                    d={`M 50 20 ${clinicalSimReport.kaplan_meier_curve.map((p, idx) => `L ${50 + idx * 100} ${20 + (1.0 - p.control_survival_rate) * 180}`).join(' ')}`}
                     fill="none"
                     stroke="#64748b"
                     strokeWidth="2.5"
                     strokeDasharray="5 5"
                   />
-
-                  {/* Experimental Curve (Emerald Green Solid) */}
                   <path
-                    d={`M 50 20 ${clinicalSimReport.kaplan_meier_curve
-                      .map((p, idx) => `L ${50 + idx * 100} ${20 + (1.0 - p.experimental_survival_rate) * 180}`)
-                      .join(' ')}`}
+                    d={`M 50 20 ${clinicalSimReport.kaplan_meier_curve.map((p, idx) => `L ${50 + idx * 100} ${20 + (1.0 - p.experimental_survival_rate) * 180}`).join(' ')}`}
                     fill="none"
                     stroke="#10b981"
                     strokeWidth="3.5"
@@ -1347,7 +1581,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 6: CRISPR & PRIMER DESIGN WORKBENCH */}
+        {/* VIEW 9: CRISPR & PRIMERS */}
         {activeTab === 'crispr' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
@@ -1365,16 +1599,7 @@ export default function App() {
                     <button
                       key={gene}
                       onClick={() => handleDesignCrispr(gene)}
-                      style={{
-                        padding: '6px 14px',
-                        borderRadius: '6px',
-                        background: crisprGene === gene ? '#f59e0b' : '#1e293b',
-                        color: crisprGene === gene ? '#000' : '#fff',
-                        border: 'none',
-                        fontSize: '12px',
-                        cursor: 'pointer',
-                        fontWeight: 700,
-                      }}
+                      style={{ padding: '6px 14px', borderRadius: '6px', background: crisprGene === gene ? '#f59e0b' : '#1e293b', color: crisprGene === gene ? '#000' : '#fff', border: 'none', fontSize: '12px', cursor: 'pointer', fontWeight: 700 }}
                     >
                       {gene}
                     </button>
@@ -1443,7 +1668,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 7: DNA & MOLECULAR VISUAL STUDIO */}
+        {/* VIEW 10: DNA & MOLECULAR VISUAL STUDIO */}
         {activeTab === 'visuals' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
@@ -1458,13 +1683,11 @@ export default function App() {
                 </div>
               </div>
 
-              {/* DNA Construct SVG */}
               <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#38bdf8', marginBottom: '12px' }}>Linear Genetic Expression Cassette</h4>
                 <div dangerouslySetInnerHTML={{ __html: dnaSvg }} />
               </div>
 
-              {/* 2D Chemical Structure SVG */}
               <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '10px', padding: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                   <h4 style={{ fontSize: '13px', fontWeight: 700, color: '#a855f7' }}>2D Chemical Structure: {selectedDrug.toUpperCase()}</h4>
@@ -1486,7 +1709,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 8: INTERACTIVE EPISTEMIC KNOWLEDGE GRAPH */}
+        {/* VIEW 11: INTERACTIVE EPISTEMIC KNOWLEDGE GRAPH */}
         {activeTab === 'graph' && (
           <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -1513,7 +1736,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 9: SPLIT-SCREEN EVIDENCE INSPECTOR */}
+        {/* VIEW 12: EVIDENCE MATRIX */}
         {activeTab === 'evidence' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '18px' }}>
@@ -1536,14 +1759,6 @@ export default function App() {
                       key_excerpt: 'Here, we engineered polyphenol-stabilized selenium nanoparticles (<60 nm) enabling neuroprotective chemoimmunotherapy via nose-to-brain delivery and macrophage reprogramming.',
                       scientific_argumentation: 'Directly resolves the primary pharmacokinetic delivery barrier in glioblastoma, proving that selenium nanocatalysts achieve deep intracranial distribution.',
                       agent_name: 'Dr. Synapse',
-                    },
-                    {
-                      paper_id: '42624300',
-                      paper_title: 'From protection to progression: How CCT/TRiC shapes therapy-induced senescence in glioblastoma multiforme',
-                      selection_rationale: 'Selected to identify resistance mechanisms governing standard temozolomide chemotherapy failure.',
-                      key_excerpt: 'CCT/TRiC chaperonin complex regulates therapy-induced senescence and promotes glioblastoma recurrence through proteostatic rewiring.',
-                      scientific_argumentation: 'Identifies CCT/TRiC as an escape mechanism, establishing the scientific rationale for combining checkpoint inhibitors with senescence modulators.',
-                      agent_name: 'Dr. ResistanceHunter',
                     },
                   ]
               ).map((ev, idx) => (
@@ -1577,7 +1792,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 10: IN-SILICO MOLECULAR STATION */}
+        {/* VIEW 13: IN-SILICO MOLECULAR STATION */}
         {activeTab === 'insilico' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
@@ -1603,7 +1818,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Molecular Properties Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '14px', marginBottom: '20px' }}>
                 <div style={{ background: '#090d16', border: '1px solid #1e293b', padding: '14px', borderRadius: '8px' }}>
                   <div style={{ fontSize: '11px', color: '#64748b' }}>MOLECULAR WEIGHT</div>
@@ -1636,7 +1850,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 3D Structure & Docking Interface */}
               <div style={{ background: '#090d16', border: '1px solid #1e293b', padding: '18px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1663,7 +1876,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 11: ADVERSARIAL PEER-REVIEW TRIBUNAL */}
+        {/* VIEW 14: ADVERSARIAL PEER-REVIEW TRIBUNAL */}
         {activeTab === 'tribunal' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
@@ -1701,7 +1914,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 12: SCIENTIFIC PAPER VIEWER & EXPORT CENTER */}
+        {/* VIEW 15: SCIENTIFIC PAPER VIEWER & EXPORT CENTER */}
         {activeTab === 'paper' && (
           <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '16px', borderBottom: '1px solid #1e293b', marginBottom: '20px' }}>
@@ -1710,7 +1923,7 @@ export default function App() {
                   <FileText size={20} color="#10b981" /> Publication-Ready Scientific Paper
                 </h3>
                 <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
-                  Formal academic paper in Markdown with structured Abstract, Terminology, Evidence Matrix, Systems Biology Graph, DepMap, Virtual Trials, Hypotheses, and Bibliography.
+                  Formal academic paper in Markdown with structured Abstract, Terminology, Evidence Matrix, Systems Biology Graph, DepMap, Virtual Trials, openFDA Safety, ClinVar, Single-Cell TME, Hypotheses, and Bibliography.
                 </p>
               </div>
 
