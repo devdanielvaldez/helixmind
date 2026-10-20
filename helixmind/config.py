@@ -41,6 +41,36 @@ class Settings(BaseSettings):
         description="Number of papers to fetch and analyze per topic",
     )
 
+    # Biomedical APIs Configuration
+    ncbi_api_key: str = Field(
+        default="1742f98e7b166a1aa284df7b00c9ae14ba09",
+        description="API Key for NCBI Entrez E-utilities",
+    )
+    ncbi_email: str = Field(
+        default="helixmind-research@example.com",
+        description="Email identifier for NCBI requests",
+    )
+    ncbi_tool: str = Field(
+        default="helixmind-platform",
+        description="Tool identifier for NCBI requests",
+    )
+    ncbi_base_url: str = Field(
+        default="https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+        description="NCBI E-utilities base URL",
+    )
+    clinical_trials_base_url: str = Field(
+        default="https://clinicaltrials.gov/api/v2",
+        description="ClinicalTrials.gov API v2 base URL",
+    )
+    europe_pmc_base_url: str = Field(
+        default="https://www.ebi.ac.uk/europepmc/webservices/rest",
+        description="Europe PMC REST API base URL",
+    )
+    europe_pmc_annotations_url: str = Field(
+        default="https://www.ebi.ac.uk/europepmc/annotations_api",
+        description="Europe PMC Annotations API base URL",
+    )
+
     # Storage paths
     cache_dir: Path = Field(
         default=Path(".cache"),
