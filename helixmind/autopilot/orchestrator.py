@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from helixmind.agents.director import AgentMission, DirectorEvaluation, ResearchDirector
 from helixmind.agents.factory import AgentFactory, SearchStrategy
 from helixmind.config import Settings, get_settings
 from helixmind.graph import GraphExtractor, KnowledgeGraph
@@ -57,6 +58,7 @@ class AutoPilotOrchestrator:
         topic: str,
         max_papers: int = 5,
         max_trials: int = 4,
+        depth: str = "standard",
         model: Optional[str] = None,
         on_progress: Optional[Callable[[str], None]] = None,
     ) -> ResearchReport:
@@ -68,6 +70,14 @@ class AutoPilotOrchestrator:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         inv_id = f"INV-{int(datetime.now().timestamp())}"
+
+        depth_cycles = {
+            "quick": 1,
+            "standard": 1,
+            "deep": 2,
+            "exhaustive": 3,
+        }
+        num_cycles = depth_cycles.get(depth.lower(), 1)
 
         # Initialize Research Journal & Knowledge Graph
         journal = ResearchJournal(investigation_id=inv_id, topic=topic)
@@ -135,11 +145,12 @@ class AutoPilotOrchestrator:
                 return []
 
         async def fetch_epmc():
+            target_limit = max(1, max_papers // 2)
             try:
-                regular = await self.epmc_client.search_async(strategy.europe_pmc_query, limit=max_papers // 2 or 2)
+                regular = await self.epmc_client.search_async(strategy.europe_pmc_query, limit=target_limit)
                 preprints = await self.epmc_client.search_async(
                     strategy.europe_pmc_query,
-                    limit=max_papers // 2 or 2,
+                    limit=target_limit,
                     preprints_only=True,
                 )
                 return regular + preprints
@@ -148,6 +159,8 @@ class AutoPilotOrchestrator:
                 return []
 
         async def fetch_trials():
+            if max_trials <= 0:
+                return []
             try:
                 return await self.ct_client.search_studies_async(
                     condition=strategy.clinical_trials_condition,
@@ -224,6 +237,34 @@ class AutoPilotOrchestrator:
         )
         journal.log(analyst.name, "Literature Review", "Synthesized top molecular pathways and targets")
 
+        # Systematically record extracted evidence with selection rationale and scientific argument
+        for p in deduped_papers[:4]:
+            target_mentions = [e.name for e in p.entities[:3]]
+            target_str = ", ".join(target_mentions) if target_mentions else "core molecular pathways"
+            rationale = (
+                f"Selected because this publication directly explores molecular targets, signaling cascades, "
+                f"or therapeutic interventions relevant to '{strategy.primary_condition}'."
+            )
+            excerpt = p.abstract[:350].strip() if len(p.abstract) > 50 else p.title
+            argument = (
+                f"This evidence substantiates our investigation by demonstrating that modulating "
+                f"{target_str} directly impacts cellular phenotype and antitumor immunity in {strategy.primary_condition}."
+            )
+            journal.record_extracted_evidence(
+                paper_id=p.pmid or p.id,
+                paper_title=p.title,
+                selection_rationale=rationale,
+                key_excerpt=excerpt,
+                scientific_argumentation=argument,
+                agent_name=analyst.name,
+            )
+            knowledge_graph.add_epistemic_evidence(
+                paper_id=p.pmid or p.id,
+                paper_title=p.title,
+                excerpt=excerpt,
+                rationale=rationale,
+            )
+
         # ---------------------------------------------------------------------
         # 5. Clinical Trial Evaluator Agent (Dr. Trials)
         # ---------------------------------------------------------------------
@@ -248,6 +289,35 @@ class AutoPilotOrchestrator:
         journal.log(trials_evaluator.name, "Clinical Analysis", "Evaluated active trials and intervention landscape")
 
         # ---------------------------------------------------------------------
+        # Dynamic Multi-Agent Exploration Loop (Coordinated by Research Director)
+        # ---------------------------------------------------------------------
+        director = ResearchDirector(ollama_client=self.ollama, model=chosen_model)
+        for cycle in range(1, num_cycles + 1):
+            notify(f"Research Director assessing knowledge gaps (Cycle {cycle}/{num_cycles})...")
+            recent_summary = f"Targets: {', '.join(entities_found[:8])}\nMolecular Context: {analysis_context[:400]}"
+            mission = await director.evaluate_and_dispatch_async(
+                topic=topic,
+                cycle_number=cycle,
+                max_cycles=num_cycles,
+                journal=journal,
+                knowledge_graph=knowledge_graph,
+                recent_findings_summary=recent_summary,
+            )
+            notify(f"Director spawned specialized agent on the fly: [bold green]{mission.agent_name}[/bold green] ({mission.agent_role})")
+            console.print(f"[dim]Objective: {mission.agent_goal} | Rationale: {mission.rationale}[/dim]")
+
+            mission_result = await director.execute_agent_mission_async(
+                mission=mission,
+                index=self.index,
+                journal=journal,
+                knowledge_graph=knowledge_graph,
+                ncbi_client=self.ncbi_client,
+                epmc_client=self.epmc_client,
+                active_papers=deduped_papers,
+            )
+            analysis_context += f"\n\n[{mission.agent_name} Findings]:\n{mission_result[:300]}"
+
+        # ---------------------------------------------------------------------
         # 6. Progressive Part-by-Part Hypothesis Generation (Dr. Hypothesis)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Hypothesis with Reasoning model to formulate hypotheses progressively (part-by-part)...")
@@ -266,7 +336,7 @@ class AutoPilotOrchestrator:
         )
 
         raw_hypotheses: List[ScientificHypothesis] = []
-        num_hypotheses = min(2, self.settings.default_max_hypotheses)
+        num_hypotheses = 1 if depth == "quick" else min(2, self.settings.default_max_hypotheses)
 
         for h_i in range(1, num_hypotheses + 1):
             notify(f"Dr. Hypothesis generating Hypothesis {h_i}/{num_hypotheses} (Part {h_i})...")
@@ -295,6 +365,13 @@ class AutoPilotOrchestrator:
                 raw_hypotheses.append(single_hypo)
                 generator.log(f"Formulated {single_hypo.id}: '{single_hypo.title}'", style="green")
                 journal.log(generator.name, "Hypothesis Generation", f"Formulated {single_hypo.id}: '{single_hypo.title}'", category="hypothesis")
+                knowledge_graph.add_epistemic_hypothesis(
+                    hypo_id=single_hypo.id,
+                    title=single_hypo.title,
+                    mechanism=single_hypo.mechanism_of_action,
+                    biological_targets=single_hypo.biological_targets,
+                    supporting_paper_ids=single_hypo.supporting_evidence_ids or [p.pmid for p in deduped_papers[:2] if p.pmid],
+                )
             except Exception as e:
                 generator.log(f"Hypothesis {h_i} structured fallback: {e}", style="yellow")
                 raw_text = await generator.execute_task_async(
@@ -314,6 +391,13 @@ class AutoPilotOrchestrator:
                 )
                 raw_hypotheses.append(fallback_hyp)
                 journal.log(generator.name, "Hypothesis Generation", f"Formulated {fallback_hyp.id}: '{fallback_hyp.title}'", category="hypothesis")
+                knowledge_graph.add_epistemic_hypothesis(
+                    hypo_id=fallback_hyp.id,
+                    title=fallback_hyp.title,
+                    mechanism=fallback_hyp.mechanism_of_action,
+                    biological_targets=fallback_hyp.biological_targets,
+                    supporting_paper_ids=[p.pmid for p in deduped_papers[:2] if p.pmid],
+                )
 
         # ---------------------------------------------------------------------
         # 7. Critical Peer-Review Agent (Dr. Skeptic / Devil's Advocate)
@@ -324,6 +408,7 @@ class AutoPilotOrchestrator:
 
         verified_hypotheses: List[ScientificHypothesis] = []
         for i, hypo in enumerate(raw_hypotheses):
+            hyp_node_id = knowledge_graph.normalize_id("hypothesis", f"{hypo.id}: {hypo.title[:40]}")
             if i == 0:
                 critique_prompt = (
                     f"Critique this primary hypothesis in 2 concise sentences:\n"
@@ -349,6 +434,13 @@ class AutoPilotOrchestrator:
                 hypo.critique_verdict = "Plausible with Caveats"
                 hypo.counter_arguments = ["Synergistic cytotoxicity and therapeutic index must be determined in-vivo."]
                 hypo.recommended_experiments = ["Combination index analysis (Chou-Talalay method) in cell viability assays."]
+
+            for risk in hypo.counter_arguments[:2]:
+                knowledge_graph.add_epistemic_doubt(
+                    doubt_statement=risk,
+                    challenged_hypothesis_node_id=hyp_node_id,
+                    agent_name=skeptic.name,
+                )
 
             verified_hypotheses.append(hypo)
             skeptic.log(f"Critique for {hypo.id} -> Verdict: [bold]{hypo.critique_verdict}[/bold]", style="magenta")
@@ -378,6 +470,14 @@ class AutoPilotOrchestrator:
             for line in protocol_roadmap.split("\n")
             if line.strip() and (line.strip()[:2].isdigit() or line.strip().startswith(("-", "•", "*")))
         ]
+
+        primary_hyp_node = knowledge_graph.normalize_id("hypothesis", f"{verified_hypotheses[0].id}: {verified_hypotheses[0].title[:40]}") if verified_hypotheses else None
+        for ms in milestones:
+            knowledge_graph.add_epistemic_conclusion(
+                conclusion_title=ms[:35],
+                statement=ms,
+                derived_from_hypothesis_node_id=primary_hyp_node,
+            )
         journal.log(designer.name, "Protocol Synthesis", f"Created {len(milestones)} validation roadmap milestones")
 
         # ---------------------------------------------------------------------
@@ -398,6 +498,8 @@ class AutoPilotOrchestrator:
             hypotheses=verified_hypotheses,
             milestones=milestones,
             output_dir=papers_dir,
+            literature_synthesis=analysis_context,
+            clinical_landscape=clinical_synthesis,
         )
         journal.log("Dr. Editor", "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
 

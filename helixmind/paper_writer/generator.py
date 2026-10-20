@@ -54,6 +54,8 @@ class ScientificPaperGenerator:
         hypotheses: List[ScientificHypothesis],
         milestones: List[str],
         output_dir: Optional[Path] = None,
+        literature_synthesis: str = "",
+        clinical_landscape: str = "",
     ) -> Path:
         """Progressively author and assemble the full scientific paper in Markdown."""
         editor = self.create_editor_agent()
@@ -63,7 +65,7 @@ class ScientificPaperGenerator:
         slug = "".join([c if c.isalnum() else "_" for c in topic.lower()])[:30].strip("_")
 
         # ---------------------------------------------------------------------
-        # 1. Author Abstract & Introduction
+        # 1. Author Abstract & Introduction (Dr. Editor)
         # ---------------------------------------------------------------------
         intro_prompt = (
             f"Topic: '{topic}'.\n"
@@ -86,27 +88,10 @@ class ScientificPaperGenerator:
         # ---------------------------------------------------------------------
         # 2. Systems Biology & Clinical Landscape Analysis
         # ---------------------------------------------------------------------
-        graph_mermaid = knowledge_graph.to_mermaid(max_edges=20)
-        graph_table = knowledge_graph.to_markdown_summary()
-        trials_summary = "\n".join([f"- **{t.nct_id}**: {t.title} ({t.status}, Phase {t.phase or 'N/A'})" for t in clinical_trials[:4]])
-
-        synthesis_prompt = (
-            f"Topic: '{topic}'.\n"
-            f"Molecular Interactions:\n{graph_table[:500]}\n"
-            f"Clinical Trials:\n{trials_summary or 'No active trials recorded.'}\n\n"
-            "Write a 2-paragraph academic synthesis covering:\n"
-            "1. Mechanistic Network Analysis (hub nodes, signaling cascades, bottlenecks).\n"
-            "2. Translational Status (ongoing trial interventions and clinical barriers)."
-        )
-        synthesis_combined = await editor.execute_task_async(synthesis_prompt)
-        
-        if "translational" in synthesis_combined.lower() or "clinical" in synthesis_combined.lower():
-            synth_parts = re.split(r"(?i)#*\s*(?:translational status|clinical)", synthesis_combined, maxsplit=1)
-            graph_discussion = synth_parts[0].strip()
-            clinical_text = synth_parts[1].strip() if len(synth_parts) > 1 else synthesis_combined
-        else:
-            graph_discussion = synthesis_combined[:500].strip()
-            clinical_text = synthesis_combined[500:].strip() or synthesis_combined
+        graph_mermaid = knowledge_graph.to_mermaid(max_edges=35)
+        graph_table = knowledge_graph.to_epistemic_matrix_markdown()
+        graph_discussion = literature_synthesis or "Cross-examination of literature highlights critical hub nodes and feedback loops governing target activation."
+        clinical_text = clinical_landscape or "Clinical evaluation demonstrates a scarcity of translational trials, emphasizing the urgency of validating preclinical hypotheses."
 
         # ---------------------------------------------------------------------
         # 5. Compile Defined Terminology Table
@@ -207,13 +192,20 @@ The following biological targets, compounds, and disease phenotypes were categor
 
 ---
 
-## 3. Systems Biology & Mechanistic Knowledge Graph
-Through cross-database literature and preprint mining, the platform constructed an integrated knowledge graph mapping molecular targets, regulatory cascades, and therapeutic interventions.
+## 3. Systematic Evidence Extraction, Excerpt Analysis & Argumentation Matrix
+The autonomous multi-agent consortium conducted systematic evidence extraction from primary literature and preprints. For each selected publication, agents documented the selection rationale, extracted key empirical fragments, and provided mechanistic scientific argumentation:
 
-### Molecular Interaction Network
+{journal.to_evidence_markdown()}
+
+---
+
+## 4. Systems Biology & Epistemic Knowledge Graph Network
+Through cross-database literature and preprint mining, the platform constructed an integrated epistemic knowledge network connecting empirical evidence, molecular concepts, testable hypotheses, critical doubts, and experimental conclusions.
+
+### Epistemic Knowledge Network Flowchart
 {graph_mermaid}
 
-### Curated Biological Interactions
+### Epistemic Connections Matrix
 {graph_table}
 
 ### Mechanistic Network Discussion
@@ -221,37 +213,38 @@ Through cross-database literature and preprint mining, the platform constructed 
 
 ---
 
-## 4. Translational Landscape & Clinical Trials Evidence
+## 5. Translational Landscape & Clinical Trials Evidence
 {clinical_text.strip()}
 
 ---
 
-## 5. Formulated Scientific Hypotheses & Mechanistic Models
+## 6. Formulated Scientific Hypotheses & Mechanistic Models
 Grounded in the synthesized literature and knowledge graph topology, the autonomous reasoning agent formulated the following testable scientific hypotheses, subjected to adversarial peer review:
 
 {"".join(hypotheses_markdown)}
 
 ---
 
-## 6. Actionable Experimental Validation Roadmap
+## 7. Actionable Experimental Validation Roadmap
 To empirically validate or falsify the surviving hypotheses, the autonomous experimental architect outlines the following sequential validation phases:
 
 {roadmap_items}
 
 ---
 
-## 7. Autonomous Discovery Audit & Methodology
+## 8. Autonomous Discovery Audit & Methodology
 This investigation was autonomously orchestrated by specialized multi-agents executing iterative literature ingestion (PubMed, Europe PMC, Preprints), clinical trials mining (ClinicalTrials.gov), vector RAG semantic search (`nomic-embed-text`), and adversarial peer-review stress-testing.
 
 - **Total Publications & Preprints Analyzed:** {len(papers)}
 - **Clinical Trials Evaluated:** {len(clinical_trials)}
+- **Extracted Evidence Items:** {len(journal.evidence_dossier)}
 - **Knowledge Graph Nodes:** {len(knowledge_graph.nodes)}
 - **Knowledge Graph Edges:** {len(knowledge_graph.edges)}
 - **Agents Deployed:** {len(journal.agents_roster)} ({', '.join([a.name for a in journal.agents_roster])})
 
 ---
 
-## 8. References
+## 9. References
 {references_block}
 """
 

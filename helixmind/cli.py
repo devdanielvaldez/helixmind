@@ -20,7 +20,13 @@ from helixmind.llm.ollama_client import OllamaClient, OllamaConnectionError
 console = Console()
 
 
-def cmd_investigate(topic: str, max_papers: int = 5, max_trials: int = 4, model: str | None = None) -> None:
+def cmd_investigate(
+    topic: str,
+    max_papers: int = 5,
+    max_trials: int = 4,
+    depth: str = "standard",
+    model: str | None = None,
+) -> None:
     """Launch an autonomous multi-agent scientific investigation."""
     import asyncio
 
@@ -29,7 +35,7 @@ def cmd_investigate(topic: str, max_papers: int = 5, max_trials: int = 4, model:
         Panel.fit(
             f"[bold green]Starting HelixMind Autonomous Investigation[/bold green]\n"
             f"Topic: [bold yellow]{topic}[/bold yellow]\n"
-            f"Target Papers: [cyan]{max_papers}[/cyan] | Clinical Trials: [cyan]{max_trials}[/cyan]"
+            f"Depth Level: [bold cyan]{depth.upper()}[/bold cyan] | Target Papers: [cyan]{max_papers}[/cyan] | Clinical Trials: [cyan]{max_trials}[/cyan]"
             + (f" | Model: [magenta]{model}[/magenta]" if model else ""),
             title="Auto-Pilot Research Engine",
             border_style="green",
@@ -41,6 +47,7 @@ def cmd_investigate(topic: str, max_papers: int = 5, max_trials: int = 4, model:
             topic=topic,
             max_papers=max_papers,
             max_trials=max_trials,
+            depth=depth,
             model=model,
         )
     )
@@ -238,6 +245,13 @@ def main() -> None:
         help="Max clinical trials to fetch (default: 3)",
     )
     inv_parser.add_argument(
+        "--depth",
+        type=str,
+        choices=["quick", "standard", "deep", "exhaustive"],
+        default="standard",
+        help="Depth of autonomous investigation: quick (1 cycle), standard (1 cycle), deep (2 cycles), exhaustive (3 cycles)",
+    )
+    inv_parser.add_argument(
         "-m", "--model",
         type=str,
         default=None,
@@ -254,7 +268,13 @@ def main() -> None:
     elif args.command == "embed":
         cmd_test_embed(client, sample_text=args.text, model=args.model)
     elif args.command == "investigate":
-        cmd_investigate(topic=args.topic, max_papers=args.papers, max_trials=args.trials, model=args.model)
+        cmd_investigate(
+            topic=args.topic,
+            max_papers=args.papers,
+            max_trials=args.trials,
+            depth=args.depth,
+            model=args.model,
+        )
     else:
         parser.print_help()
 

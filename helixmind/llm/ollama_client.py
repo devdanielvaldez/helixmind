@@ -145,7 +145,7 @@ class OllamaClient:
         if format:
             payload["format"] = format
 
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 with self._sync_client() as client:
                     res = client.post("/api/chat", json=payload)
@@ -154,8 +154,8 @@ class OllamaClient:
                     res.raise_for_status()
                     return res.json()
             except httpx.RequestError as e:
-                if attempt < 2:
-                    time.sleep(1.5)
+                if attempt < 1:
+                    time.sleep(1.0)
                     continue
                 raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
 
@@ -178,7 +178,7 @@ class OllamaClient:
         if format:
             payload["format"] = format
 
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 async with self._async_client() as client:
                     res = await client.post("/api/chat", json=payload)
@@ -187,8 +187,8 @@ class OllamaClient:
                     res.raise_for_status()
                     return res.json()
             except httpx.RequestError as e:
-                if attempt < 2:
-                    await asyncio.sleep(1.5)
+                if attempt < 1:
+                    await asyncio.sleep(1.0)
                     continue
                 raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
 
