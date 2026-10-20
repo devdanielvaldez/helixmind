@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
+from helixmind.papers.models import ExtractedEvidence
+
 
 class JournalEntry(BaseModel):
     """An event or discovery logged during research."""
@@ -41,13 +43,60 @@ class AgentRecord(BaseModel):
 
 
 class ResearchJournal(BaseModel):
-    """Lab notebook tracking discoveries, active agents, and compiled glossary."""
+    """Lab notebook tracking discoveries, active agents, compiled glossary, and evidence dossier."""
     investigation_id: str
     topic: str
     created_at: str = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     entries: List[JournalEntry] = Field(default_factory=list)
     glossary: Dict[str, GlossaryTerm] = Field(default_factory=dict)
     agents_roster: List[AgentRecord] = Field(default_factory=list)
+    evidence_dossier: List[ExtractedEvidence] = Field(default_factory=list)
+
+    def record_extracted_evidence(
+        self,
+        paper_id: str,
+        paper_title: str,
+        selection_rationale: str,
+        key_excerpt: str,
+        scientific_argumentation: str,
+        agent_name: str = "Dr. Synapse",
+        relevance_score: float = 0.85,
+    ) -> ExtractedEvidence:
+        """Store an analyzed paper excerpt with selection rationale and scientific argument."""
+        # Avoid duplicate evidence for the same paper and excerpt
+        for ev in self.evidence_dossier:
+            if ev.paper_id == paper_id and ev.key_excerpt[:50] == key_excerpt[:50]:
+                return ev
+
+        evidence = ExtractedEvidence(
+            paper_id=paper_id,
+            paper_title=paper_title,
+            selection_rationale=selection_rationale.strip(),
+            key_excerpt=key_excerpt.strip(),
+            scientific_argumentation=scientific_argumentation.strip(),
+            agent_name=agent_name,
+            relevance_score=relevance_score,
+        )
+        self.evidence_dossier.append(evidence)
+        return evidence
+
+    def to_evidence_markdown(self) -> str:
+        """Render the complete systematic evidence extraction and argumentation matrix in Markdown."""
+        if not self.evidence_dossier:
+            return "*No primary literature excerpts documented yet.*"
+
+        blocks = []
+        for i, ev in enumerate(self.evidence_dossier, 1):
+            block = (
+                f"### Evidence Item {i}: {ev.paper_title}\n"
+                f"- **Identifier:** `{ev.paper_id}` | **Reviewed By:** {ev.agent_name} | **Relevance:** {ev.relevance_score * 100:.0f}%\n"
+                f"- **Selection Rationale:** {ev.selection_rationale}\n"
+                f"> **Key Excerpt / Important Fragment:**\n> \"{ev.key_excerpt}\"\n\n"
+                f"- **Scientific Argumentation & Disease Relevance:**\n{ev.scientific_argumentation}\n"
+            )
+            blocks.append(block)
+
+        return "\n".join(blocks)
 
     def log(
         self,

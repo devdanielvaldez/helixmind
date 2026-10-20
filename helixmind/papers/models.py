@@ -55,3 +55,14 @@ class DocumentChunk(BaseModel):
     section: str = "abstract"
     content: str
     embedding: Optional[List[float]] = None
+
+
+class ExtractedEvidence(BaseModel):
+    """An excerpt extracted from a scientific paper with selection rationale and scientific argumentation."""
+    paper_id: str
+    paper_title: str
+    selection_rationale: str = Field(description="Why this publication was selected and deemed critical")
+    key_excerpt: str = Field(description="Exact important fragment, mechanism, or finding taken from the paper")
+    scientific_argumentation: str = Field(description="Detailed argument for how this excerpt supports the investigation")
+    agent_name: str = Field(default="Dr. Synapse", description="Agent that reviewed and extracted the evidence")
+    relevance_score: float = Field(default=0.85, ge=0.0, le=1.0)
