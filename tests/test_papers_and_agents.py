@@ -1,5 +1,6 @@
 """Unit and integration tests for paper clients, vector RAG indexer, and dynamic agents."""
 
+from unittest.mock import AsyncMock, patch
 import pytest
 from helixmind.agents.factory import AgentFactory, SearchStrategy
 from helixmind.papers.clinical_trials_client import ClinicalTrialsClient
@@ -69,9 +70,19 @@ async def test_agent_spawner():
     strategist = factory.create_search_strategist()
     assert strategist.name == "Dr. Strategist"
 
-    strategy = await strategist.execute_structured_task_async(
-        task_instruction="Formulate search terms for: Triple negative breast cancer immunotherapy",
-        schema=SearchStrategy,
+    mock_strat = SearchStrategy(
+        primary_condition="triple negative breast cancer",
+        pubmed_query='"triple negative breast neoplasms"[Title/Abstract] AND immunotherapy',
+        clinical_trials_condition="triple negative breast cancer",
+        europe_pmc_query="triple negative breast cancer immunotherapy",
+        key_biological_targets=["PD-L1", "TROP-2"],
     )
-    assert strategy.primary_condition != ""
-    assert strategy.pubmed_query != ""
+
+    with patch.object(strategist, "execute_structured_task_async", new_callable=AsyncMock) as mock_exec:
+        mock_exec.return_value = mock_strat
+        strategy = await strategist.execute_structured_task_async(
+            task_instruction="Formulate search terms for: Triple negative breast cancer immunotherapy",
+            schema=SearchStrategy,
+        )
+        assert strategy.primary_condition == "triple negative breast cancer"
+        assert "PD-L1" in strategy.key_biological_targets

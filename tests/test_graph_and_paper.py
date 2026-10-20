@@ -41,6 +41,60 @@ def test_knowledge_graph_construction():
     assert "| **HER2** |" in summary
 
 
+def test_epistemic_knowledge_graph_connections():
+    graph = KnowledgeGraph()
+
+    # 1. Add Evidence
+    ev_node = graph.add_epistemic_evidence(
+        paper_id="42669245",
+        paper_title="Selenium nanocatalysts",
+        excerpt="Nanocatalysts cross the blood brain barrier",
+        rationale="Overcomes delivery challenge in glioblastoma",
+    )
+    assert "evidence:evidence_42669245" in graph.nodes
+
+    # 2. Add Hypothesis wired to targets and evidence
+    hyp_node = graph.add_epistemic_hypothesis(
+        hypo_id="HYP-01",
+        title="Selenium dual therapy",
+        mechanism="Redox nanocatalysts trigger macrophage reprogramming",
+        biological_targets=["PD-L1", "Selenium_NPs"],
+        supporting_paper_ids=["42669245"],
+    )
+    assert hyp_node.category == "hypothesis"
+    assert any(e.relation == "supports" for e in graph.edges)
+    assert any(e.relation == "targets" for e in graph.edges)
+
+    # 3. Add Doubt / Risk
+    doubt_node = graph.add_epistemic_doubt(
+        doubt_statement="Off-target toxicity in healthy astrocytes",
+        challenged_hypothesis_node_id=hyp_node.id,
+    )
+    assert doubt_node.category == "doubt"
+    assert any(e.relation == "challenges" for e in graph.edges)
+
+    # 4. Add Conclusion
+    conc_node = graph.add_epistemic_conclusion(
+        conclusion_title="In-vitro cell viability milestone",
+        statement="MTT assay confirms selective cytotoxicity",
+        derived_from_hypothesis_node_id=hyp_node.id,
+    )
+    assert conc_node.category == "conclusion"
+    assert any(e.relation == "derives_from" for e in graph.edges)
+
+    # 5. Check Epistemic Matrix
+    matrix_md = graph.to_epistemic_matrix_markdown()
+    assert "CHALLENGES" in matrix_md
+    assert "SUPPORTS" in matrix_md
+    assert "DERIVES_FROM" in matrix_md
+
+    # 6. Check Mermaid
+    mermaid = graph.to_mermaid()
+    assert '{{"HYPOTHESIS:' in mermaid
+    assert '[/"DOUBT / RISK:' in mermaid
+    assert "-.-|challenges|-.-" in mermaid
+
+
 def test_research_journal_and_glossary():
     journal = ResearchJournal(investigation_id="INV-TEST-01", topic="Breast Cancer")
 
@@ -62,6 +116,28 @@ def test_research_journal_and_glossary():
     assert "# Research Journal: Breast Cancer" in md
     assert "PD-L1" in md
     assert "Dr. Strategist" in md
+
+
+def test_extracted_evidence_and_argumentation():
+    journal = ResearchJournal(investigation_id="INV-TEST-EV", topic="Immunotherapy")
+
+    ev = journal.record_extracted_evidence(
+        paper_id="PMID:11111",
+        paper_title="Targeting PD-1 in glioblastoma",
+        selection_rationale="Provides evidence for T-cell exhaustion reversal in GBM",
+        key_excerpt="Nivolumab enhanced CD8+ infiltration into tumor tissue by 45%.",
+        scientific_argumentation="Proves that PD-1 blockade overcomes local immunosuppression.",
+        agent_name="Dr. Synapse",
+    )
+
+    assert len(journal.evidence_dossier) == 1
+    assert ev.paper_id == "PMID:11111"
+    assert "CD8+ infiltration" in ev.key_excerpt
+
+    ev_md = journal.to_evidence_markdown()
+    assert "Evidence Item 1: Targeting PD-1 in glioblastoma" in ev_md
+    assert "Selection Rationale" in ev_md
+    assert "Scientific Argumentation" in ev_md
 
 
 @pytest.mark.asyncio
@@ -111,4 +187,6 @@ async def test_paper_generator_structure(tmp_path: Path):
     assert "## Abstract" in content
     assert "flowchart TD" in content
     assert "Hypothesis 1: Dual checkpoint inhibition overcomes innate resistance" in content
-    assert "## 8. References" in content
+    assert "## 3. Systematic Evidence Extraction" in content
+    assert "## 4. Systems Biology & Epistemic Knowledge Graph Network" in content
+    assert "## 9. References" in content
