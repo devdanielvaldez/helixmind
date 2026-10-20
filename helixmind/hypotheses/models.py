@@ -128,3 +128,6 @@ class ResearchReport(BaseModel):
     next_research_milestones: List[str] = Field(default_factory=list)
     paper_markdown_path: Optional[str] = None
     knowledge_graph_summary: Optional[str] = None
+    depmap_evaluations: List[Dict[str, Any]] = Field(default_factory=list)
+    denovo_analogs: List[Dict[str, Any]] = Field(default_factory=list)
+    clinical_simulation: Optional[Dict[str, Any]] = None
