@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from helixmind.agents.base import BaseAgent
 from helixmind.graph.models import KnowledgeGraph
@@ -14,12 +14,26 @@ from helixmind.papers.models import Paper
 
 class ExtractedRelation(BaseModel):
     """An interaction extracted from biomedical text."""
-    source_name: str = Field(description="Source entity name (e.g. PD-L1, Tamoxifen, PI3K)")
+    source_name: str = Field(default="", description="Source entity name (e.g. PD-L1, Tamoxifen, PI3K)")
     source_category: str = Field(default="protein", description="gene, protein, drug, pathway, disease, biomarker")
-    relation: str = Field(description="inhibits, activates, upregulates, downregulates, targets, biomarker_of")
-    target_name: str = Field(description="Target entity name (e.g. T-cells, HER2, Apoptosis)")
+    relation: str = Field(default="interacts_with", description="inhibits, activates, upregulates, downregulates, targets, biomarker_of")
+    target_name: str = Field(default="", description="Target entity name (e.g. T-cells, HER2, Apoptosis)")
     target_category: str = Field(default="process", description="gene, protein, pathway, disease, process")
     evidence: str = Field(default="", description="1 sentence mechanistic explanation")
+
+    @model_validator(mode="before")
+    @classmethod
+    def clean_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            src = data.get("source_name") or data.get("source") or data.get("name") or data.get("from") or ""
+            tgt = data.get("target_name") or data.get("target") or data.get("to") or ""
+            rel = data.get("relation") or data.get("interaction") or data.get("type") or "interacts_with"
+            data["source_name"] = str(src)
+            data["target_name"] = str(tgt)
+            data["relation"] = str(rel)
+        elif isinstance(data, str):
+            data = {"source_name": data, "target_name": "Target", "relation": "interacts_with"}
+        return data
 
     @field_validator("source_category", "target_category", mode="before")
     @classmethod
@@ -35,6 +49,28 @@ class ExtractedRelation(BaseModel):
 class ExtractedRelationList(BaseModel):
     """Container for batch extracted relations."""
     relations: List[ExtractedRelation] = Field(default_factory=list)
+
+    @field_validator("relations", mode="before")
+    @classmethod
+    def clean_relations(cls, v: Any) -> Any:
+        import json
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                v = parsed if isinstance(parsed, list) else [v]
+            except Exception:
+                v = [v]
+        if isinstance(v, list):
+            cleaned = []
+            for item in v:
+                if isinstance(item, dict):
+                    cleaned.append(item)
+                elif isinstance(item, str) and item.strip():
+                    cleaned.append({"source_name": item.strip(), "target_name": "Target", "relation": "interacts_with"})
+                elif isinstance(item, (int, float)):
+                    cleaned.append({"source_name": f"Entity_{item}", "target_name": "Target", "relation": "interacts_with"})
+            return cleaned
+        return []
 
 
 class GraphExtractor:
