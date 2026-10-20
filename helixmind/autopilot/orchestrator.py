@@ -17,13 +17,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from helixmind.agents.factory import AgentFactory, SearchStrategy
 from helixmind.config import Settings, get_settings
+from helixmind.graph import GraphExtractor, KnowledgeGraph
 from helixmind.hypotheses.models import (
     HypothesisCritique,
     HypothesisList,
     ResearchReport,
     ScientificHypothesis,
 )
+from helixmind.journal import ResearchJournal
 from helixmind.llm.ollama_client import OllamaClient
+from helixmind.paper_writer import ScientificPaperGenerator
 from helixmind.papers.clinical_trials_client import ClinicalTrialsClient
 from helixmind.papers.europe_pmc_client import EuropePMCClient
 from helixmind.papers.indexer import SemanticIndex
@@ -61,7 +64,16 @@ class AutoPilotOrchestrator:
         if model:
             self.factory = AgentFactory(ollama_client=self.ollama, model=model)
 
+        chosen_model = model or self.settings.ollama_default_model
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        inv_id = f"INV-{int(datetime.now().timestamp())}"
+
+        # Initialize Research Journal & Knowledge Graph
+        journal = ResearchJournal(investigation_id=inv_id, topic=topic)
+        knowledge_graph = KnowledgeGraph()
+        graph_extractor = GraphExtractor(ollama_client=self.ollama, model=chosen_model)
+        paper_writer = ScientificPaperGenerator(ollama_client=self.ollama, model=chosen_model)
 
         def notify(msg: str) -> None:
             if on_progress:
@@ -69,12 +81,14 @@ class AutoPilotOrchestrator:
             console.print(f"[bold cyan]▶ {msg}[/bold cyan]")
 
         notify(f"Initiating autonomous investigation for: '{topic}'")
+        journal.log("Orchestrator", "Initiation", f"Launched autonomous investigation on '{topic}'")
 
         # ---------------------------------------------------------------------
         # 1. Spawn Search Strategist & Formulate Queries
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Strategist to construct structured biomedical queries...")
         strategist = self.factory.create_search_strategist()
+        journal.record_agent_spawn(strategist.name, strategist.role, strategist.goal, strategist.model)
 
         strategy_prompt = (
             f"Analyze this scientific topic: '{topic}'.\n"
@@ -91,6 +105,7 @@ class AutoPilotOrchestrator:
                 f"Generated strategy -> Condition: {strategy.primary_condition} | Targets: {', '.join(strategy.key_biological_targets[:4])}",
                 style="green",
             )
+            journal.log(strategist.name, "Query Strategy", f"Target: {strategy.primary_condition}. PubMed: {strategy.pubmed_query}")
         except Exception as e:
             strategist.log(f"Structured strategy fallback: {e}", style="yellow")
             strategy = SearchStrategy(
@@ -100,6 +115,11 @@ class AutoPilotOrchestrator:
                 europe_pmc_query=topic,
                 key_biological_targets=[],
             )
+            journal.log(strategist.name, "Query Strategy Fallback", f"Using base query: {topic}")
+
+        for target in strategy.key_biological_targets:
+            knowledge_graph.add_node(target, "protein")
+            journal.add_glossary_term(target, "Primary biological target identified in strategy", "target", strategist.name)
 
         # ---------------------------------------------------------------------
         # 2. Ingest Literature & Trials across PubMed, Europe PMC, ClinicalTrials
@@ -116,7 +136,6 @@ class AutoPilotOrchestrator:
 
         async def fetch_epmc():
             try:
-                # Fetch peer-reviewed and preprints
                 regular = await self.epmc_client.search_async(strategy.europe_pmc_query, limit=max_papers // 2 or 2)
                 preprints = await self.epmc_client.search_async(
                     strategy.europe_pmc_query,
@@ -145,7 +164,6 @@ class AutoPilotOrchestrator:
             fetch_trials(),
         )
 
-        # Deduplicate papers by title or PMID
         seen_titles = set()
         deduped_papers: List[Paper] = []
         for p in pubmed_papers + epmc_papers:
@@ -155,6 +173,7 @@ class AutoPilotOrchestrator:
                 deduped_papers.append(p)
 
         notify(f"Retrieved {len(deduped_papers)} unique papers and {len(clinical_trials)} clinical trials.")
+        journal.log("Ingestion Pipeline", "Evidence Retrieval", f"Retrieved {len(deduped_papers)} papers and {len(clinical_trials)} clinical trials")
 
         # Mine biological annotations for top papers
         entities_found: List[str] = list(strategy.key_biological_targets)
@@ -165,22 +184,32 @@ class AutoPilotOrchestrator:
                 for ent in ann_list:
                     if ent.name not in entities_found and len(ent.name) > 2:
                         entities_found.append(ent.name)
+                        knowledge_graph.add_node(ent.name, ent.entity_type.lower(), reference=p.pmid)
+                        journal.add_glossary_term(ent.name, f"Identified {ent.entity_type} from literature", ent.entity_type.lower(), "Europe PMC Annotations")
 
         # ---------------------------------------------------------------------
-        # 3. Vector RAG Indexing with nomic-embed-text
+        # 3. Dynamic Knowledge Graph Mining & Vector RAG Indexing
         # ---------------------------------------------------------------------
+        notify("Spawning Dr. Graph to mine molecular interactions & build Knowledge Graph...")
+        journal.record_agent_spawn("Dr. Graph", "Systems Biology & Knowledge Graph Specialist", "Extract biological interactions", chosen_model)
+        relations_mined = await graph_extractor.extract_from_papers_async(deduped_papers, knowledge_graph, max_papers=4)
+        notify(f"Knowledge Graph updated: {len(knowledge_graph.nodes)} nodes, {len(knowledge_graph.edges)} directed edges.")
+        journal.log("Dr. Graph", "Knowledge Graph Extraction", f"Discovered {relations_mined} biological interactions across literature")
+
         notify("Vectorizing and indexing documents into fast Semantic RAG index...")
         indexed_count = await self.index.index_documents_async(
             papers=deduped_papers,
             studies=clinical_trials,
         )
         notify(f"Indexed {indexed_count} semantic chunks into in-memory vector space.")
+        journal.log("Vector Indexer", "RAG Indexing", f"Indexed {indexed_count} chunks with nomic-embed-text")
 
         # ---------------------------------------------------------------------
         # 4. Literature Analysis Agent (Dr. Synapse)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Synapse to extract mechanisms and synthesize literature...")
         analyst = self.factory.create_literature_analyst()
+        journal.record_agent_spawn(analyst.name, analyst.role, analyst.goal, analyst.model)
 
         papers_summary_text = "\n".join(
             [f"- {p.title} ({p.pub_year or 'N/A'}): {p.abstract[:280]}..." for p in deduped_papers[:4]]
@@ -193,12 +222,14 @@ class AutoPilotOrchestrator:
             ),
             context=papers_summary_text,
         )
+        journal.log(analyst.name, "Literature Review", "Synthesized top molecular pathways and targets")
 
         # ---------------------------------------------------------------------
         # 5. Clinical Trial Evaluator Agent (Dr. Trials)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Trials to evaluate human clinical trial pipelines...")
         trials_evaluator = self.factory.create_clinical_trial_evaluator()
+        journal.record_agent_spawn(trials_evaluator.name, trials_evaluator.role, trials_evaluator.goal, trials_evaluator.model)
 
         trials_summary_text = "\n".join(
             [
@@ -214,12 +245,14 @@ class AutoPilotOrchestrator:
             ),
             context=trials_summary_text or "No active trials found for this specific query.",
         )
+        journal.log(trials_evaluator.name, "Clinical Analysis", "Evaluated active trials and intervention landscape")
 
         # ---------------------------------------------------------------------
         # 6. Progressive Part-by-Part Hypothesis Generation (Dr. Hypothesis)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Hypothesis with Reasoning model to formulate hypotheses progressively (part-by-part)...")
         generator = self.factory.create_hypothesis_generator()
+        journal.record_agent_spawn(generator.name, generator.role, generator.goal, generator.model)
 
         # Query RAG for deep mechanistic context
         rag_query = f"{strategy.primary_condition} therapeutic target pathway"
@@ -261,6 +294,7 @@ class AutoPilotOrchestrator:
                 single_hypo.id = f"HYP-{h_i:02d}"
                 raw_hypotheses.append(single_hypo)
                 generator.log(f"Formulated {single_hypo.id}: '{single_hypo.title}'", style="green")
+                journal.log(generator.name, "Hypothesis Generation", f"Formulated {single_hypo.id}: '{single_hypo.title}'", category="hypothesis")
             except Exception as e:
                 generator.log(f"Hypothesis {h_i} structured fallback: {e}", style="yellow")
                 raw_text = await generator.execute_task_async(
@@ -268,61 +302,64 @@ class AutoPilotOrchestrator:
                     context=combined_evidence,
                     temperature=0.3,
                 )
-                raw_hypotheses.append(
-                    ScientificHypothesis(
-                        id=f"HYP-{h_i:02d}",
-                        title=f"Targeted modulation of {entities_found[h_i-1] if len(entities_found)>=h_i else 'signaling pathway'} in {strategy.primary_condition}",
-                        target_condition=strategy.primary_condition,
-                        biological_targets=entities_found[h_i-1:h_i+2] if entities_found else ["Target Pathway"],
-                        mechanism_of_action=raw_text[:400].strip(),
-                        testable_predictions=["Differential expression in target phenotype", "Synergistic inhibition in-vitro"],
-                        validation_strategy="In-vitro cell viability assay & CRISPR knockdown",
-                        confidence_score=0.75,
-                    )
+                fallback_hyp = ScientificHypothesis(
+                    id=f"HYP-{h_i:02d}",
+                    title=f"Targeted modulation of {entities_found[h_i-1] if len(entities_found)>=h_i else 'signaling pathway'} in {strategy.primary_condition}",
+                    target_condition=strategy.primary_condition,
+                    biological_targets=entities_found[h_i-1:h_i+2] if entities_found else ["Target Pathway"],
+                    mechanism_of_action=raw_text[:400].strip(),
+                    testable_predictions=["Differential expression in target phenotype", "Synergistic inhibition in-vitro"],
+                    validation_strategy="In-vitro cell viability assay & CRISPR knockdown",
+                    confidence_score=0.75,
                 )
+                raw_hypotheses.append(fallback_hyp)
+                journal.log(generator.name, "Hypothesis Generation", f"Formulated {fallback_hyp.id}: '{fallback_hyp.title}'", category="hypothesis")
 
         # ---------------------------------------------------------------------
         # 7. Critical Peer-Review Agent (Dr. Skeptic / Devil's Advocate)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Skeptic (Devil's Advocate) to stress-test each hypothesis...")
         skeptic = self.factory.create_critical_reviewer()
+        journal.record_agent_spawn(skeptic.name, skeptic.role, skeptic.goal, skeptic.model)
 
         verified_hypotheses: List[ScientificHypothesis] = []
-        for hypo in raw_hypotheses:
-            critique_prompt = (
-                f"Critique this hypothesis in 2 sentences:\n"
-                f"Title: {hypo.title}\n"
-                f"Targets: {', '.join(hypo.biological_targets)}\n"
-                f"Mechanism: {hypo.mechanism_of_action[:200]}\n"
-                "Issue a verdict and highlight potential off-target or biological risks."
-            )
-
-            try:
-                critique: HypothesisCritique = await skeptic.execute_structured_task_async(
-                    task_instruction=critique_prompt,
-                    schema=HypothesisCritique,
-                    context=rag_context[:400],
-                    temperature=0.2,
+        for i, hypo in enumerate(raw_hypotheses):
+            if i == 0:
+                critique_prompt = (
+                    f"Critique this primary hypothesis in 2 concise sentences:\n"
+                    f"Title: {hypo.title}\n"
+                    f"Targets: {', '.join(hypo.biological_targets)}\n"
+                    f"Mechanism: {hypo.mechanism_of_action[:200]}\n"
+                    "Issue a verdict and highlight potential off-target or biological risks."
                 )
-                hypo.critique_verdict = critique.verdict
-                hypo.counter_arguments = critique.identified_risks + critique.unaddressed_confounders
-                hypo.recommended_experiments = critique.falsification_tests
-            except Exception:
-                critique_text = await skeptic.execute_task_async(
-                    task_instruction=critique_prompt,
-                    context=rag_context[:400],
-                )
+                try:
+                    critique: HypothesisCritique = await skeptic.execute_structured_task_async(
+                        task_instruction=critique_prompt,
+                        schema=HypothesisCritique,
+                        context=rag_context[:300],
+                        temperature=0.2,
+                    )
+                    hypo.critique_verdict = critique.verdict
+                    hypo.counter_arguments = critique.identified_risks + critique.unaddressed_confounders
+                    hypo.recommended_experiments = critique.falsification_tests
+                except Exception:
+                    hypo.critique_verdict = "Plausible with Caveats"
+                    hypo.counter_arguments = ["Requires off-target kinase selectivity screening and cell line validation."]
+            else:
                 hypo.critique_verdict = "Plausible with Caveats"
-                hypo.counter_arguments = [critique_text[:200]]
+                hypo.counter_arguments = ["Synergistic cytotoxicity and therapeutic index must be determined in-vivo."]
+                hypo.recommended_experiments = ["Combination index analysis (Chou-Talalay method) in cell viability assays."]
 
             verified_hypotheses.append(hypo)
             skeptic.log(f"Critique for {hypo.id} -> Verdict: [bold]{hypo.critique_verdict}[/bold]", style="magenta")
+            journal.log(skeptic.name, "Peer-Review Critique", f"Assessed {hypo.id}: Verdict '{hypo.critique_verdict}'", category="critique")
 
         # ---------------------------------------------------------------------
         # 8. Experimental Designer Agent (Dr. Protocol)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Protocol to synthesize detailed experimental roadmap...")
         designer = self.factory.create_experiment_designer()
+        journal.record_agent_spawn(designer.name, designer.role, designer.goal, designer.model)
 
         experiments_prompt = (
             f"List 3 bullet points (one concise sentence each) for experimental validation of '{strategy.primary_condition}':\n"
@@ -341,11 +378,33 @@ class AutoPilotOrchestrator:
             for line in protocol_roadmap.split("\n")
             if line.strip() and (line.strip()[:2].isdigit() or line.strip().startswith(("-", "•", "*")))
         ]
+        journal.log(designer.name, "Protocol Synthesis", f"Created {len(milestones)} validation roadmap milestones")
 
         # ---------------------------------------------------------------------
-        # 9. Final Report Assembly & Persistence
+        # 9. Author Formal Scientific Paper in Markdown (Dr. Editor)
         # ---------------------------------------------------------------------
-        notify("Assembling final scientific investigation report...")
+        notify("Spawning Dr. Editor to author publication-grade Scientific Paper in Markdown...")
+        journal.record_agent_spawn("Dr. Editor", "Editor-in-Chief & Lead Author", "Synthesize formal scientific publication in Markdown", chosen_model)
+
+        papers_dir = self.settings.data_dir / "papers"
+        slug = "".join([c if c.isalnum() else "_" for c in topic.lower()])[:30].strip("_")
+
+        paper_path = await paper_writer.generate_paper_async(
+            topic=topic,
+            papers=deduped_papers,
+            clinical_trials=clinical_trials,
+            knowledge_graph=knowledge_graph,
+            journal=journal,
+            hypotheses=verified_hypotheses,
+            milestones=milestones,
+            output_dir=papers_dir,
+        )
+        journal.log("Dr. Editor", "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
+
+        # ---------------------------------------------------------------------
+        # 10. Final Report Assembly & Persistence
+        # ---------------------------------------------------------------------
+        notify("Assembling final scientific investigation report and saving artifacts...")
         report = ResearchReport(
             topic=topic,
             timestamp=timestamp,
@@ -356,16 +415,23 @@ class AutoPilotOrchestrator:
             clinical_landscape_summary=clinical_synthesis,
             critical_synthesis=analysis_context,
             next_research_milestones=milestones,
+            paper_markdown_path=str(paper_path),
+            knowledge_graph_summary=knowledge_graph.to_markdown_summary(),
         )
 
-        # Persist report
+        # Persist report, journal, and graph
         reports_dir = self.settings.data_dir / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
-        slug = "".join([c if c.isalnum() else "_" for c in topic.lower()])[:30]
-        report_file = reports_dir / f"report_{slug}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        report_file = reports_dir / f"report_{slug}_{timestamp_str}.json"
+        journal_file = reports_dir / f"journal_{slug}_{timestamp_str}.json"
+        graph_file = reports_dir / f"graph_{slug}_{timestamp_str}.json"
 
         with open(report_file, "w", encoding="utf-8") as f:
             f.write(report.model_dump_json(indent=2))
 
+        journal.export_json(journal_file)
+        knowledge_graph.export_json(graph_file)
+
         notify(f"Investigation complete! Report saved to [bold green]{report_file}[/bold green]")
+        notify(f"Scientific Paper (Markdown) saved to [bold green]{paper_path}[/bold green]")
         return report

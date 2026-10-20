@@ -72,6 +72,17 @@ def cmd_investigate(topic: str, max_papers: int = 5, max_trials: int = 4, model:
         for m in report.next_research_milestones:
             console.print(f"  [bold green]→[/bold green] {m}")
 
+    if report.paper_markdown_path:
+        console.print(
+            Panel.fit(
+                f"[bold green]✓ Full Publication-Ready Scientific Paper Authored![/bold green]\n"
+                f"File: [bold cyan]{report.paper_markdown_path}[/bold cyan]\n"
+                f"Format: [white]GitHub Markdown (Abstract, Terminology, Intro, Mermaid Knowledge Graph, Hypotheses, Roadmap, References)[/white]",
+                title="Scientific Paper Output",
+                border_style="magenta",
+            )
+        )
+
 
 
 def cmd_status(client: OllamaClient) -> None:
