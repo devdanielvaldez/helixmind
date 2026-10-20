@@ -6,8 +6,10 @@ instances for chat completions, streaming, structured outputs, and embeddings.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, TypeVar, Union
 import httpx
 from pydantic import BaseModel
@@ -143,15 +145,19 @@ class OllamaClient:
         if format:
             payload["format"] = format
 
-        try:
-            with self._sync_client() as client:
-                res = client.post("/api/chat", json=payload)
-                if res.status_code == 404:
-                    raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama.")
-                res.raise_for_status()
-                return res.json()
-        except httpx.RequestError as e:
-            raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
+        for attempt in range(3):
+            try:
+                with self._sync_client() as client:
+                    res = client.post("/api/chat", json=payload)
+                    if res.status_code == 404:
+                        raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama.")
+                    res.raise_for_status()
+                    return res.json()
+            except httpx.RequestError as e:
+                if attempt < 2:
+                    time.sleep(1.5)
+                    continue
+                raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
 
     async def chat_async(
         self,
@@ -172,15 +178,19 @@ class OllamaClient:
         if format:
             payload["format"] = format
 
-        try:
-            async with self._async_client() as client:
-                res = await client.post("/api/chat", json=payload)
-                if res.status_code == 404:
-                    raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama.")
-                res.raise_for_status()
-                return res.json()
-        except httpx.RequestError as e:
-            raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
+        for attempt in range(3):
+            try:
+                async with self._async_client() as client:
+                    res = await client.post("/api/chat", json=payload)
+                    if res.status_code == 404:
+                        raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama.")
+                    res.raise_for_status()
+                    return res.json()
+            except httpx.RequestError as e:
+                if attempt < 2:
+                    await asyncio.sleep(1.5)
+                    continue
+                raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
 
     def chat_stream(
         self,
