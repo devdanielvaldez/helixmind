@@ -26,6 +26,20 @@ class NCBIClient:
             params["api_key"] = self.api_key
         return params
 
+    @staticmethod
+    def _clean_pubmed_abstract(raw: str) -> str:
+        """Strip journal citation line and author affiliation blocks from PubMed plain text."""
+        if not raw:
+            return ""
+        if "author information" in raw.lower():
+            parts = raw.split("\n\n")
+            for p_idx, part in enumerate(parts):
+                if "author information" in part.lower():
+                    body = "\n\n".join(parts[p_idx + 1:]).strip()
+                    if body:
+                        return body
+        return raw.strip()
+
     # -------------------------------------------------------------------------
     # PubMed Search (ESearch)
     # -------------------------------------------------------------------------
@@ -126,7 +140,7 @@ class NCBIClient:
                     }
                     fetch_res = await client.get(f"{self.base_url}/efetch.fcgi", params=fetch_params)
                     if fetch_res.status_code == 200:
-                        abstract_text = fetch_res.text.strip()
+                        abstract_text = self._clean_pubmed_abstract(fetch_res.text)
                 except Exception:
                     abstract_text = title
 
@@ -198,7 +212,7 @@ class NCBIClient:
                     }
                     fetch_res = client.get(f"{self.base_url}/efetch.fcgi", params=fetch_params)
                     if fetch_res.status_code == 200:
-                        abstract_text = fetch_res.text.strip()
+                        abstract_text = self._clean_pubmed_abstract(fetch_res.text)
                 except Exception:
                     abstract_text = title
 

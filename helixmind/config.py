@@ -19,11 +19,11 @@ class Settings(BaseSettings):
         description="Timeout in seconds for Ollama requests",
     )
     ollama_default_model: str = Field(
-        default="llama3.2:3b",
+        default="llama3.2:1b",
         description="Default general-purpose LLM for agents",
     )
     ollama_reasoning_model: str = Field(
-        default="deepseek-r1:1.5b",
+        default="llama3.2:1b",
         description="Reasoning/thinking model for hypothesis formulation",
     )
     ollama_embedding_model: str = Field(
