@@ -192,4 +192,7 @@ async def test_paper_generator_structure(tmp_path: Path):
     assert "## 6. DepMap Functional Genomics" in content
     assert "## 7. In-Silico De Novo Lead Optimization" in content
     assert "## 8. Virtual Patient Clinical Trial Simulation" in content
-    assert "## 12. References" in content
+    assert "## 9. Real-World FDA Pharmacovigilance" in content
+    assert "## 10. Clinical Genomic Patient Stratification" in content
+    assert "## 11. Single-Cell Tumor Microenvironment" in content
+    assert "## 15. References" in content
