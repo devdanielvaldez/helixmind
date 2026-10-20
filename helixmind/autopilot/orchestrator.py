@@ -27,6 +27,14 @@ from helixmind.hypotheses.models import (
     ResearchReport,
     ScientificHypothesis,
 )
+from helixmind.insilico import (
+    ClinicalSimulator,
+    ClinicalTrialSimulationReport,
+    DeNovoGenerator,
+    DeNovoMoleculeCandidate,
+    DepMapGeneEffect,
+    DepMapVerifier,
+)
 from helixmind.journal import ResearchJournal
 from helixmind.llm.ollama_client import OllamaClient
 from helixmind.paper_writer import ScientificPaperGenerator
@@ -562,6 +570,61 @@ class AutoPilotOrchestrator:
         )
 
         # ---------------------------------------------------------------------
+        # 8b. DepMap Functional Genomics & Cancer Essentiality Audit (Dr. DepMap)
+        # ---------------------------------------------------------------------
+        notify("Spawning Dr. DepMap to verify target essentiality across human cancer cell lines...")
+        journal.record_agent_spawn("Dr. DepMap", "Functional Genomics & Cancer Dependency Specialist", "Verify Chronos dependency scores", chosen_model)
+        depmap_verifier = DepMapVerifier()
+        depmap_evals: List[DepMapGeneEffect] = []
+
+        targets_to_check = [t for t in (strategy.key_biological_targets + entities_found) if len(t) <= 10 and not any(c in t for c in " /():")][:3]
+        if not targets_to_check:
+            targets_to_check = ["STAT3", "CD274"]
+
+        for tgt in targets_to_check:
+            dep_res = await depmap_verifier.verify_gene_essentiality_async(tgt, target_condition=strategy.primary_condition)
+            depmap_evals.append(dep_res)
+            journal.log(
+                "Dr. DepMap",
+                "Cancer Dependency Map",
+                f"Gene: {dep_res.gene_symbol} | Chronos Score: {dep_res.chronos_score} ({dep_res.essentiality_tier})",
+                evidence_id=f"DepMap:{dep_res.gene_symbol}",
+            )
+
+        # ---------------------------------------------------------------------
+        # 8c. In-Silico De Novo Molecule Design & Synthetic Accessibility (SAscore)
+        # ---------------------------------------------------------------------
+        notify("De Novo Molecular Generator designing optimized analogs and computing SAscore...")
+        denovo_gen = DeNovoGenerator()
+        candidate_parent = strategy.clinical_trials_intervention or (entities_found[0] if entities_found else "Tamoxifen")
+        denovo_analogs: List[DeNovoMoleculeCandidate] = denovo_gen.generate_optimized_analogs(
+            parent_drug_name=candidate_parent,
+            max_analogs=2,
+        )
+        for ana in denovo_analogs:
+            journal.log(
+                "De Novo Engine",
+                "Lead Optimization",
+                f"Generated {ana.compound_code} ({ana.name}) | SAscore: {ana.sa_score} ({ana.sa_verdict}) | BBB LogBB: {ana.log_bb}",
+            )
+
+        # ---------------------------------------------------------------------
+        # 8d. Virtual Patient Clinical Trial Simulation (PK/PD & Kaplan-Meier)
+        # ---------------------------------------------------------------------
+        notify("Simulating Clinical Trial in Virtual Patient Cohort (PK/PD & Kaplan-Meier)...")
+        lead_drug_name = denovo_analogs[0].name if denovo_analogs else (candidate_parent or "Lead Agent")
+        trial_sim: ClinicalTrialSimulationReport = ClinicalSimulator.simulate_trial(
+            drug_name=lead_drug_name,
+            target_condition=strategy.primary_condition,
+            cohort_size=200,
+        )
+        journal.log(
+            "Clinical Simulator",
+            "In-Silico Phase 2b Trial",
+            f"Simulated {trial_sim.total_patients_simulated} virtual patients. Hazard Ratio: {trial_sim.hazard_ratio} (p={trial_sim.logrank_p_value}, PoS: {trial_sim.probability_of_technical_success}%)",
+        )
+
+        # ---------------------------------------------------------------------
         # 9. Author Formal Scientific Paper in Markdown (Dr. Editor)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Editor to author publication-grade Scientific Paper in Markdown...")
@@ -581,6 +644,9 @@ class AutoPilotOrchestrator:
             output_dir=papers_dir,
             literature_synthesis=analysis_context,
             clinical_landscape=clinical_synthesis,
+            depmap_evaluations=depmap_evals,
+            denovo_analogs=denovo_analogs,
+            clinical_simulation=trial_sim,
         )
         journal.log("Dr. Editor", "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
         await emit(
@@ -609,6 +675,9 @@ class AutoPilotOrchestrator:
             next_research_milestones=milestones,
             paper_markdown_path=str(paper_path),
             knowledge_graph_summary=knowledge_graph.to_markdown_summary(),
+            depmap_evaluations=[d.model_dump() for d in depmap_evals],
+            denovo_analogs=[a.model_dump() for a in denovo_analogs],
+            clinical_simulation=trial_sim.model_dump(),
         )
 
         # Persist report, journal, and graph
