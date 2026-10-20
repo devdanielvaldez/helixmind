@@ -25,7 +25,7 @@ def cmd_investigate(
     topic: str,
     max_papers: int = 5,
     max_trials: int = 4,
-    depth: str = "standard",
+    depth: str = "deep",
     model: str | None = None,
 ) -> None:
     """Launch an autonomous multi-agent scientific investigation."""
@@ -248,9 +248,9 @@ def main() -> None:
     inv_parser.add_argument(
         "--depth",
         type=str,
-        choices=["quick", "standard", "deep", "exhaustive"],
-        default="standard",
-        help="Depth of autonomous investigation: quick (1 cycle), standard (1 cycle), deep (2 cycles), exhaustive (3 cycles)",
+        choices=["deep", "exhaustive", "institutional"],
+        default="deep",
+        help="Depth of autonomous investigation: deep (2 cycles, default), exhaustive (3 cycles), institutional (4 cycles)",
     )
     inv_parser.add_argument(
         "-m", "--model",

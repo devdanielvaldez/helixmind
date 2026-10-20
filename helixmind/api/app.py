@@ -25,10 +25,13 @@ from helixmind.insilico import (
     CRISPRDesigner,
     ChemoinformaticsEngine,
     ClinicalSimulator,
+    ClinVarStratifier,
     DeNovoGenerator,
     DepMapVerifier,
     DockingSimulator,
+    FDAPharmacovigilance,
     StructureRetriever,
+    TMEMapper,
 )
 from helixmind.llm.ollama_client import OllamaClient
 from helixmind.papers import PDFParser
@@ -58,7 +61,7 @@ class InvestigationRequest(BaseModel):
     topic: str = Field(description="Target disease, cellular mechanism, or biological topic to investigate")
     max_papers: int = Field(default=4, ge=1, le=20, description="Max literature to ingest")
     max_trials: int = Field(default=2, ge=0, le=10, description="Max clinical trials to analyze")
-    depth: str = Field(default="standard", description="quick, standard, deep, or exhaustive")
+    depth: str = Field(default="deep", description="deep (2 cycles, default), exhaustive (3 cycles), or institutional (4 cycles)")
     model: Optional[str] = Field(default=None, description="Model override (e.g. llama3.2:1b)")
 
 
@@ -319,6 +322,30 @@ async def simulate_clinical_trial_endpoint(req: ClinicalSimRequest) -> Dict[str,
         predicted_delta_g=req.delta_g,
         cohort_size=req.cohort_size,
     )
+    return report.model_dump()
+
+
+@app.get("/api/insilico/fda/{drug_name}")
+async def get_fda_pharmacovigilance(drug_name: str, limit: int = 10) -> Dict[str, Any]:
+    """Retrieve real human post-marketing adverse reactions and safety signals from openFDA FAERS."""
+    fda_client = FDAPharmacovigilance()
+    report = await fda_client.fetch_safety_profile_async(drug_name, limit=limit)
+    return report.model_dump()
+
+
+@app.get("/api/insilico/clinvar/{gene_symbol}")
+async def get_clinvar_stratification(gene_symbol: str, condition: str = "Oncology") -> Dict[str, Any]:
+    """Retrieve pathogenic variants and precision inclusion criteria from NCBI ClinVar."""
+    stratifier = ClinVarStratifier()
+    report = await stratifier.stratify_target_async(gene_symbol, target_condition=condition)
+    return report.model_dump()
+
+
+@app.get("/api/insilico/tme/map")
+async def get_tme_map(targets: str = "CD274,STAT3,TGFB1", condition: str = "Solid Tumor") -> Dict[str, Any]:
+    """Deconvolute single-cell tumor microenvironment and map paracrine ligand-receptor axes."""
+    gene_list = [g.strip() for g in targets.split(",") if g.strip()]
+    report = TMEMapper.analyze_microenvironment(gene_list, condition=condition)
     return report.model_dump()
 
 
