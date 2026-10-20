@@ -12,6 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from helixmind import __version__
+from helixmind.api import start_server
 from helixmind.autopilot import AutoPilotOrchestrator
 from helixmind.config import get_settings
 from helixmind.hypotheses.models import ResearchReport
@@ -258,6 +259,12 @@ def main() -> None:
         help="LLM model override (e.g. 'llama3.2:1b' for fast CPU inference or 'llama3.2:3b')",
     )
 
+    # Command: serve (Launch FastAPI & WebSockets gateway)
+    serve_parser = subparsers.add_parser("serve", help="Launch FastAPI REST & real-time WebSockets API server")
+    serve_parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    serve_parser.add_argument("--reload", action="store_true", help="Enable hot reloading")
+
     args = parser.parse_args()
     client = OllamaClient()
 
@@ -275,6 +282,8 @@ def main() -> None:
             depth=args.depth,
             model=args.model,
         )
+    elif args.command == "serve":
+        start_server(host=args.host, port=args.port, reload=args.reload)
     else:
         parser.print_help()
 

@@ -17,6 +17,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from helixmind.agents.director import AgentMission, DirectorEvaluation, ResearchDirector
 from helixmind.agents.factory import AgentFactory, SearchStrategy
+from helixmind.api.events import EventType
+from helixmind.api.ws_manager import ws_manager
 from helixmind.config import Settings, get_settings
 from helixmind.graph import GraphExtractor, KnowledgeGraph
 from helixmind.hypotheses.models import (
@@ -90,15 +92,35 @@ class AutoPilotOrchestrator:
                 on_progress(msg)
             console.print(f"[bold cyan]▶ {msg}[/bold cyan]")
 
-        notify(f"Initiating autonomous investigation for: '{topic}'")
+        async def emit(event_type: EventType, message: str, data: Dict[str, Any] | None = None) -> None:
+            notify(message)
+            try:
+                await ws_manager.broadcast_event(
+                    event_type=event_type,
+                    investigation_id=inv_id,
+                    message=message,
+                    data=data or {},
+                )
+            except Exception:
+                pass
+
+        await emit(
+            EventType.INVESTIGATION_STARTED,
+            f"Initiating autonomous investigation for: '{topic}'",
+            {"topic": topic, "depth": depth, "investigation_id": inv_id, "timestamp": timestamp},
+        )
         journal.log("Orchestrator", "Initiation", f"Launched autonomous investigation on '{topic}'")
 
         # ---------------------------------------------------------------------
         # 1. Spawn Search Strategist & Formulate Queries
         # ---------------------------------------------------------------------
-        notify("Spawning Dr. Strategist to construct structured biomedical queries...")
         strategist = self.factory.create_search_strategist()
         journal.record_agent_spawn(strategist.name, strategist.role, strategist.goal, strategist.model)
+        await emit(
+            EventType.AGENT_SPAWNED,
+            f"Spawning {strategist.name} to construct structured biomedical queries...",
+            {"name": strategist.name, "role": strategist.role, "goal": strategist.goal},
+        )
 
         strategy_prompt = (
             f"Analyze this scientific topic: '{topic}'.\n"
@@ -185,7 +207,16 @@ class AutoPilotOrchestrator:
                 seen_titles.add(norm_title)
                 deduped_papers.append(p)
 
-        notify(f"Retrieved {len(deduped_papers)} unique papers and {len(clinical_trials)} clinical trials.")
+        await emit(
+            EventType.LITERATURE_INGESTED,
+            f"Retrieved {len(deduped_papers)} unique papers and {len(clinical_trials)} clinical trials.",
+            {
+                "papers_count": len(deduped_papers),
+                "trials_count": len(clinical_trials),
+                "papers": [{"id": p.id, "title": p.title, "year": p.pub_year} for p in deduped_papers[:5]],
+                "trials": [{"id": t.nct_id, "title": t.title, "phase": t.phase} for t in clinical_trials[:5]],
+            },
+        )
         journal.log("Ingestion Pipeline", "Evidence Retrieval", f"Retrieved {len(deduped_papers)} papers and {len(clinical_trials)} clinical trials")
 
         # Mine biological annotations for top papers
@@ -206,7 +237,15 @@ class AutoPilotOrchestrator:
         notify("Spawning Dr. Graph to mine molecular interactions & build Knowledge Graph...")
         journal.record_agent_spawn("Dr. Graph", "Systems Biology & Knowledge Graph Specialist", "Extract biological interactions", chosen_model)
         relations_mined = await graph_extractor.extract_from_papers_async(deduped_papers, knowledge_graph, max_papers=4)
-        notify(f"Knowledge Graph updated: {len(knowledge_graph.nodes)} nodes, {len(knowledge_graph.edges)} directed edges.")
+        await emit(
+            EventType.GRAPH_UPDATED,
+            f"Knowledge Graph updated: {len(knowledge_graph.nodes)} nodes, {len(knowledge_graph.edges)} directed edges.",
+            {
+                "nodes_count": len(knowledge_graph.nodes),
+                "edges_count": len(knowledge_graph.edges),
+                "mermaid": knowledge_graph.to_mermaid(max_edges=30),
+            },
+        )
         journal.log("Dr. Graph", "Knowledge Graph Extraction", f"Discovered {relations_mined} biological interactions across literature")
 
         notify("Vectorizing and indexing documents into fast Semantic RAG index...")
@@ -250,7 +289,7 @@ class AutoPilotOrchestrator:
                 f"This evidence substantiates our investigation by demonstrating that modulating "
                 f"{target_str} directly impacts cellular phenotype and antitumor immunity in {strategy.primary_condition}."
             )
-            journal.record_extracted_evidence(
+            ev = journal.record_extracted_evidence(
                 paper_id=p.pmid or p.id,
                 paper_title=p.title,
                 selection_rationale=rationale,
@@ -263,6 +302,11 @@ class AutoPilotOrchestrator:
                 paper_title=p.title,
                 excerpt=excerpt,
                 rationale=rationale,
+            )
+            await emit(
+                EventType.EVIDENCE_EXTRACTED,
+                f"Extracted key excerpt from {p.title}",
+                ev.model_dump(mode="json"),
             )
 
         # ---------------------------------------------------------------------
@@ -303,7 +347,19 @@ class AutoPilotOrchestrator:
                 knowledge_graph=knowledge_graph,
                 recent_findings_summary=recent_summary,
             )
-            notify(f"Director spawned specialized agent on the fly: [bold green]{mission.agent_name}[/bold green] ({mission.agent_role})")
+            await emit(
+                EventType.DIRECTOR_CYCLE,
+                f"Director spawned specialized agent on the fly: {mission.agent_name} ({mission.agent_role})",
+                {
+                    "cycle": cycle,
+                    "max_cycles": num_cycles,
+                    "agent_name": mission.agent_name,
+                    "agent_role": mission.agent_role,
+                    "agent_goal": mission.agent_goal,
+                    "sub_query": mission.sub_query_to_search,
+                    "rationale": mission.rationale,
+                },
+            )
             console.print(f"[dim]Objective: {mission.agent_goal} | Rationale: {mission.rationale}[/dim]")
 
             mission_result = await director.execute_agent_mission_async(
@@ -372,6 +428,11 @@ class AutoPilotOrchestrator:
                     biological_targets=single_hypo.biological_targets,
                     supporting_paper_ids=single_hypo.supporting_evidence_ids or [p.pmid for p in deduped_papers[:2] if p.pmid],
                 )
+                await emit(
+                    EventType.HYPOTHESIS_GENERATED,
+                    f"Formulated {single_hypo.id}: '{single_hypo.title}'",
+                    single_hypo.model_dump(mode="json"),
+                )
             except Exception as e:
                 generator.log(f"Hypothesis {h_i} structured fallback: {e}", style="yellow")
                 raw_text = await generator.execute_task_async(
@@ -397,6 +458,11 @@ class AutoPilotOrchestrator:
                     mechanism=fallback_hyp.mechanism_of_action,
                     biological_targets=fallback_hyp.biological_targets,
                     supporting_paper_ids=[p.pmid for p in deduped_papers[:2] if p.pmid],
+                )
+                await emit(
+                    EventType.HYPOTHESIS_GENERATED,
+                    f"Formulated {fallback_hyp.id}: '{fallback_hyp.title}'",
+                    fallback_hyp.model_dump(mode="json"),
                 )
 
         # ---------------------------------------------------------------------
@@ -445,6 +511,16 @@ class AutoPilotOrchestrator:
             verified_hypotheses.append(hypo)
             skeptic.log(f"Critique for {hypo.id} -> Verdict: [bold]{hypo.critique_verdict}[/bold]", style="magenta")
             journal.log(skeptic.name, "Peer-Review Critique", f"Assessed {hypo.id}: Verdict '{hypo.critique_verdict}'", category="critique")
+            await emit(
+                EventType.HYPOTHESIS_CRITIQUED,
+                f"Critique for {hypo.id} -> Verdict: {hypo.critique_verdict}",
+                {
+                    "hypo_id": hypo.id,
+                    "verdict": hypo.critique_verdict,
+                    "counter_arguments": hypo.counter_arguments,
+                    "recommended_experiments": hypo.recommended_experiments,
+                },
+            )
 
         # ---------------------------------------------------------------------
         # 8. Experimental Designer Agent (Dr. Protocol)
@@ -479,6 +555,11 @@ class AutoPilotOrchestrator:
                 derived_from_hypothesis_node_id=primary_hyp_node,
             )
         journal.log(designer.name, "Protocol Synthesis", f"Created {len(milestones)} validation roadmap milestones")
+        await emit(
+            EventType.ROADMAP_SYNTHESIZED,
+            f"Synthesized {len(milestones)} validation roadmap milestones",
+            {"milestones": milestones},
+        )
 
         # ---------------------------------------------------------------------
         # 9. Author Formal Scientific Paper in Markdown (Dr. Editor)
@@ -502,6 +583,15 @@ class AutoPilotOrchestrator:
             clinical_landscape=clinical_synthesis,
         )
         journal.log("Dr. Editor", "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
+        await emit(
+            EventType.PAPER_AUTHORED,
+            f"Scientific Paper authored and saved to: {paper_path.name}",
+            {
+                "paper_path": str(paper_path),
+                "filename": paper_path.name,
+                "title": f"Autonomous Investigation of {topic.title()}",
+            },
+        )
 
         # ---------------------------------------------------------------------
         # 10. Final Report Assembly & Persistence
@@ -536,4 +626,17 @@ class AutoPilotOrchestrator:
 
         notify(f"Investigation complete! Report saved to [bold green]{report_file}[/bold green]")
         notify(f"Scientific Paper (Markdown) saved to [bold green]{paper_path}[/bold green]")
+
+        await emit(
+            EventType.INVESTIGATION_COMPLETED,
+            f"Investigation complete! Report saved to {report_file.name}",
+            {
+                "investigation_id": inv_id,
+                "report_file": str(report_file),
+                "paper_path": str(paper_path),
+                "papers_analyzed": len(deduped_papers),
+                "clinical_trials_analyzed": len(clinical_trials),
+                "hypotheses_count": len(verified_hypotheses),
+            },
+        )
         return report
