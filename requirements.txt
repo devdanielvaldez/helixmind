@@ -12,6 +12,17 @@ pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
 numpy>=1.26.0
 
+# Chemoinformatics & In-Silico Molecular Modeling
+rdkit>=2023.9.0
+
+# Document & PDF Ingestion
+pypdf>=4.0.0
+python-multipart>=0.0.9
+
+# Academic Publishing & Citations
+reportlab>=4.0.0
+bibtexparser>=1.4.0
+
 # Terminal UI & formatting
 rich>=13.7.0
 

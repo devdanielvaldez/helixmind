@@ -11,6 +11,7 @@ from helixmind.papers.models import (
     Paper,
 )
 from helixmind.papers.ncbi_client import NCBIClient
+from helixmind.papers.pdf_parser import PDFParser
 
 __all__ = [
     "BiologicalEntity",
@@ -20,6 +21,7 @@ __all__ = [
     "EuropePMCClient",
     "ExtractedEvidence",
     "NCBIClient",
+    "PDFParser",
     "Paper",
     "SemanticIndex",
 ]

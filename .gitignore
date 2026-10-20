@@ -40,6 +40,11 @@ data/
 .coverage
 htmlcov/
 
+# Node / Frontend
+node_modules/
+dist/
+.npm
+
 # IDE
 .idea/
 .vscode/
