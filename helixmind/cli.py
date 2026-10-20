@@ -12,10 +12,66 @@ from rich.panel import Panel
 from rich.table import Table
 
 from helixmind import __version__
+from helixmind.autopilot import AutoPilotOrchestrator
 from helixmind.config import get_settings
+from helixmind.hypotheses.models import ResearchReport
 from helixmind.llm.ollama_client import OllamaClient, OllamaConnectionError
 
 console = Console()
+
+
+def cmd_investigate(topic: str, max_papers: int = 5, max_trials: int = 4, model: str | None = None) -> None:
+    """Launch an autonomous multi-agent scientific investigation."""
+    import asyncio
+
+    orchestrator = AutoPilotOrchestrator()
+    console.print(
+        Panel.fit(
+            f"[bold green]Starting HelixMind Autonomous Investigation[/bold green]\n"
+            f"Topic: [bold yellow]{topic}[/bold yellow]\n"
+            f"Target Papers: [cyan]{max_papers}[/cyan] | Clinical Trials: [cyan]{max_trials}[/cyan]"
+            + (f" | Model: [magenta]{model}[/magenta]" if model else ""),
+            title="Auto-Pilot Research Engine",
+            border_style="green",
+        )
+    )
+
+    report: ResearchReport = asyncio.run(
+        orchestrator.investigate_async(
+            topic=topic,
+            max_papers=max_papers,
+            max_trials=max_trials,
+            model=model,
+        )
+    )
+
+    # Render Report Summary
+    console.rule("[bold green]Investigation Findings & Hypotheses[/bold green]")
+    console.print(
+        f"\n[bold]Analyzed:[/bold] {report.papers_analyzed} papers | {report.clinical_trials_analyzed} trials\n"
+        f"[bold]Discovered Targets:[/bold] {', '.join(report.entities_discovered[:10])}\n"
+    )
+
+    for i, hyp in enumerate(report.hypotheses, 1):
+        verdict_color = "green" if "Strongly" in (hyp.critique_verdict or "") or "Plausible" in (hyp.critique_verdict or "") else "yellow"
+        hyp_content = (
+            f"[bold cyan]Targets:[/bold cyan] {', '.join(hyp.biological_targets)}\n\n"
+            f"[bold]Mechanism of Action:[/bold]\n{hyp.mechanism_of_action}\n\n"
+            f"[bold]Testable Predictions:[/bold]\n" + "\n".join([f"• {p}" for p in hyp.testable_predictions]) + "\n\n"
+            f"[bold]Validation Strategy:[/bold] {hyp.validation_strategy}\n"
+            f"[bold]Confidence Score:[/bold] {hyp.confidence_score * 100:.0f}%\n"
+            f"[bold]Reviewer Verdict:[/bold] [{verdict_color}]{hyp.critique_verdict or 'Pending'}[/{verdict_color}]\n"
+        )
+        if hyp.counter_arguments:
+            hyp_content += f"[bold red]Caveats / Risks:[/bold red] {'; '.join(hyp.counter_arguments[:2])}\n"
+
+        console.print(Panel(hyp_content, title=f"Hypothesis {i}: {hyp.title}", border_style="cyan"))
+
+    if report.next_research_milestones:
+        console.rule("[bold cyan]Recommended Experimental Roadmap[/bold cyan]")
+        for m in report.next_research_milestones:
+            console.print(f"  [bold green]→[/bold green] {m}")
+
 
 
 def cmd_status(client: OllamaClient) -> None:
@@ -151,6 +207,32 @@ def main() -> None:
     )
     embed_parser.add_argument("-m", "--model", type=str, default=None, help="Embedding model override")
 
+    # Command: investigate (Auto-Pilot multi-agent research loop)
+    inv_parser = subparsers.add_parser("investigate", help="Run autonomous multi-agent scientific investigation")
+    inv_parser.add_argument(
+        "topic",
+        type=str,
+        help="Disease, cellular target, or biological topic to investigate (e.g. 'breast cancer immunotherapy')",
+    )
+    inv_parser.add_argument(
+        "--papers",
+        type=int,
+        default=5,
+        help="Max papers to fetch and index (default: 5)",
+    )
+    inv_parser.add_argument(
+        "--trials",
+        type=int,
+        default=3,
+        help="Max clinical trials to fetch (default: 3)",
+    )
+    inv_parser.add_argument(
+        "-m", "--model",
+        type=str,
+        default=None,
+        help="LLM model override (e.g. 'llama3.2:1b' for fast CPU inference or 'llama3.2:3b')",
+    )
+
     args = parser.parse_args()
     client = OllamaClient()
 
@@ -160,6 +242,8 @@ def main() -> None:
         cmd_test_chat(client, prompt=args.prompt, model=args.model)
     elif args.command == "embed":
         cmd_test_embed(client, sample_text=args.text, model=args.model)
+    elif args.command == "investigate":
+        cmd_investigate(topic=args.topic, max_papers=args.papers, max_trials=args.trials, model=args.model)
     else:
         parser.print_help()
 
