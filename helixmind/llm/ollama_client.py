@@ -235,8 +235,106 @@ class OllamaClient:
                             yield content
 
     # -------------------------------------------------------------------------
+    # Multi-Part and Chunked Large Output Generation
+    # -------------------------------------------------------------------------
+
+    async def chat_with_continuation_async(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        options: Optional[Dict[str, Any]] = None,
+        max_continuations: int = 3,
+    ) -> str:
+        """Send chat request and automatically continue generation if truncated by max token length."""
+        accumulated_text = ""
+        current_messages = list(messages)
+
+        for _ in range(max_continuations + 1):
+            res = await self.chat_async(
+                messages=current_messages,
+                model=model,
+                temperature=temperature,
+                options=options,
+            )
+            content = res.get("message", {}).get("content", "")
+            accumulated_text += content
+
+            # Check if terminated by length (Ollama output limit reached)
+            if res.get("done_reason") == "length":
+                current_messages.append({"role": "assistant", "content": content})
+                current_messages.append({
+                    "role": "user",
+                    "content": "Continue immediately from the exact point you stopped. Do not repeat previous text.",
+                })
+            else:
+                break
+
+        return accumulated_text
+
+    async def chat_multipart_async(
+        self,
+        goal: str,
+        sections: List[Dict[str, str]],
+        context: str = "",
+        model: Optional[str] = None,
+        temperature: float = 0.5,
+    ) -> Dict[str, str]:
+        """Generate a comprehensive multi-part response section by section to avoid token truncation."""
+        assembled_sections: Dict[str, str] = {}
+        rolling_summary = ""
+
+        for i, sec in enumerate(sections, 1):
+            title = sec.get("title", f"Part {i}")
+            instruction = sec.get("prompt", "")
+
+            section_prompt = (
+                f"### Overarching Scientific Goal:\n{goal}\n\n"
+                f"### Empirical Context:\n{context[:1000]}\n\n"
+            )
+            if rolling_summary:
+                section_prompt += f"### Previous Sections Completed:\n{rolling_summary}\n\n"
+
+            section_prompt += (
+                f"### Current Task: Write Section {i} - '{title}'\n"
+                f"Instruction: {instruction}\n"
+                f"Write an exhaustive, thorough explanation for this section only."
+            )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are HelixMind, an exhaustive scientific intelligence. Provide deep, rigorous content for the requested section.",
+                },
+                {"role": "user", "content": section_prompt},
+            ]
+
+            content = await self.chat_with_continuation_async(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+            )
+            assembled_sections[title] = content.strip()
+            rolling_summary += f"- {title}: {content[:150].strip()}...\n"
+
+        return assembled_sections
+
+    # -------------------------------------------------------------------------
     # Structured Output with Pydantic
     # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _build_schema_instruction(schema: Type[T]) -> str:
+        properties = schema.model_json_schema().get("properties", {})
+        example = {}
+        for key, prop in properties.items():
+            desc = prop.get("description", prop.get("type", "value"))
+            example[key] = f"<{desc}>"
+        return (
+            f"\nYou must return ONLY a valid JSON object populated with actual values according to these keys:\n"
+            f"{json.dumps(example, indent=2)}\n"
+            f"Do NOT return the schema or type definitions. Return concrete filled values."
+        )
 
     def chat_structured(
         self,
@@ -246,12 +344,7 @@ class OllamaClient:
         temperature: float = 0.2,
     ) -> T:
         """Request structured JSON completion and parse into a Pydantic model."""
-        # Append schema instruction
-        system_instruction = (
-            f"\nYou must return ONLY a valid JSON object matching this schema:\n"
-            f"{json.dumps(schema.model_json_schema(), indent=2)}\n"
-            f"Do not include any conversational text, explanations, or codeblock fences."
-        )
+        system_instruction = self._build_schema_instruction(schema)
         augmented_messages = list(messages)
         if augmented_messages and augmented_messages[0].get("role") == "system":
             augmented_messages[0] = {
@@ -269,7 +362,23 @@ class OllamaClient:
         )
         raw_text = response.get("message", {}).get("content", "")
         clean_json = self._clean_json_text(raw_text)
-        return schema.model_validate_json(clean_json)
+        try:
+            return schema.model_validate_json(clean_json)
+        except Exception:
+            parsed = json.loads(clean_json)
+            if isinstance(parsed, list):
+                # If wrapped schema has a list field, wrap it
+                fields = schema.model_fields
+                list_keys = [k for k, f in fields.items() if getattr(f.annotation, "__origin__", None) is list or "List" in str(f.annotation)]
+                if list_keys:
+                    return schema.model_validate({list_keys[0]: parsed})
+            elif isinstance(parsed, dict):
+                filtered = {
+                    k: v for k, v in parsed.items()
+                    if not (isinstance(v, str) and (v.startswith("<") or v in ["string", "object"]))
+                }
+                return schema.model_validate(filtered)
+            raise
 
     async def chat_structured_async(
         self,
@@ -279,11 +388,7 @@ class OllamaClient:
         temperature: float = 0.2,
     ) -> T:
         """Asynchronously request structured JSON completion and parse into a Pydantic model."""
-        system_instruction = (
-            f"\nYou must return ONLY a valid JSON object matching this schema:\n"
-            f"{json.dumps(schema.model_json_schema(), indent=2)}\n"
-            f"Do not include any conversational text, explanations, or codeblock fences."
-        )
+        system_instruction = self._build_schema_instruction(schema)
         augmented_messages = list(messages)
         if augmented_messages and augmented_messages[0].get("role") == "system":
             augmented_messages[0] = {
@@ -301,7 +406,22 @@ class OllamaClient:
         )
         raw_text = response.get("message", {}).get("content", "")
         clean_json = self._clean_json_text(raw_text)
-        return schema.model_validate_json(clean_json)
+        try:
+            return schema.model_validate_json(clean_json)
+        except Exception:
+            parsed = json.loads(clean_json)
+            if isinstance(parsed, list):
+                fields = schema.model_fields
+                list_keys = [k for k, f in fields.items() if getattr(f.annotation, "__origin__", None) is list or "List" in str(f.annotation)]
+                if list_keys:
+                    return schema.model_validate({list_keys[0]: parsed})
+            elif isinstance(parsed, dict):
+                filtered = {
+                    k: v for k, v in parsed.items()
+                    if not (isinstance(v, str) and (v.startswith("<") or v in ["string", "object"]))
+                }
+                return schema.model_validate(filtered)
+            raise
 
     # -------------------------------------------------------------------------
     # Embeddings
@@ -363,13 +483,17 @@ class OllamaClient:
     @staticmethod
     def _clean_json_text(text: str) -> str:
         """Strip markdown fences or extra reasoning text around JSON."""
-        # Extract markdown json block if present
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
         if match:
             return match.group(1).strip()
-        # Fallback to finding outermost { ... }
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return text[start : end + 1]
+
+        first_curly = text.find("{")
+        last_curly = text.rfind("}")
+        first_square = text.find("[")
+        last_square = text.rfind("]")
+
+        if first_square != -1 and (first_curly == -1 or first_square < first_curly) and last_square > first_square:
+            return text[first_square : last_square + 1]
+        elif first_curly != -1 and last_curly > first_curly:
+            return text[first_curly : last_curly + 1]
         return text.strip()
