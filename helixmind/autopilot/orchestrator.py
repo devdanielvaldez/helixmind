@@ -31,16 +31,19 @@ from helixmind.insilico import (
     ClinicalSimulator,
     ClinicalTrialSimulationReport,
     ClinVarStratifier,
+    CRISPRDesigner,
     DeNovoGenerator,
     DeNovoMoleculeCandidate,
     DepMapGeneEffect,
     DepMapVerifier,
+    DockingSimulator,
     FDAPharmacovigilance,
     TMEMapper,
 )
 from helixmind.journal import ResearchJournal
 from helixmind.llm.ollama_client import OllamaClient
 from helixmind.paper_writer import ScientificPaperGenerator
+from helixmind.rigor import PeerReviewTribunal
 from helixmind.papers.clinical_trials_client import ClinicalTrialsClient
 from helixmind.papers.europe_pmc_client import EuropePMCClient
 from helixmind.papers.indexer import SemanticIndex
@@ -682,6 +685,23 @@ class AutoPilotOrchestrator:
         )
 
         # ---------------------------------------------------------------------
+        # 8h. In-Silico Molecular Docking, CRISPR Design & Tribunal Review
+        # ---------------------------------------------------------------------
+        docking_result = DockingSimulator.predict_docking_affinity(
+            ligand_name=candidate_parent,
+            target_name=targets_to_check[0],
+        )
+        crispr_designer = CRISPRDesigner()
+        crispr_report = await crispr_designer.design_for_gene_async(gene_name=targets_to_check[0])
+        tribunal = PeerReviewTribunal(ollama_client=self.ollama, model=chosen_model)
+        tribunal_consensus = await tribunal.convene_tribunal_async(
+            hypothesis_title=verified_hypotheses[0].title if verified_hypotheses else "Lead Hypothesis",
+            mechanism=verified_hypotheses[0].mechanism_of_action if verified_hypotheses else "",
+            targets=verified_hypotheses[0].biological_targets if verified_hypotheses else targets_to_check,
+            predictions=verified_hypotheses[0].testable_predictions if verified_hypotheses else [],
+        )
+
+        # ---------------------------------------------------------------------
         # 9. Author Formal Scientific Paper in Markdown (Dr. Editor)
         # ---------------------------------------------------------------------
         notify("Spawning Dr. Editor to author publication-grade Scientific Paper in Markdown...")
@@ -707,6 +727,9 @@ class AutoPilotOrchestrator:
             fda_safety=fda_report,
             clinvar_stratification=clinvar_report,
             tme_microenvironment=tme_report,
+            docking_prediction=docking_result,
+            crispr_design=crispr_report,
+            tribunal_consensus=tribunal_consensus,
         )
         journal.log("Dr. Editor", "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
         await emit(
