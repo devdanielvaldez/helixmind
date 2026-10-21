@@ -3,11 +3,28 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional
+import re
+from typing import Dict, Optional, Set
 from pydantic import BaseModel, Field
-from rdkit import Chem
+from rdkit import Chem, RDLogger
 from rdkit.Chem import Descriptors, Lipinski, Crippen, rdMolDescriptors
 from rdkit.Chem import QED
+
+# Suppress RDKit C++ stderr parser warning noise
+RDLogger.DisableLog("rdApp.*")
+
+# Common biological terms, receptors, proteins, and antibodies that are not small molecules
+NON_CHEMICAL_BLACKLIST: Set[str] = {
+    "key", "tumor", "tumour", "cancer", "death", "tissue", "tissues", "cell", "cells",
+    "endoplasmic", "reticulum", "triple-negative", "ferroptosis", "nanogel", "nanoparticle",
+    "lipid", "gene", "protein", "proteins", "receptor", "receptors", "axis", "pathway",
+    "pathways", "syndrome", "disease", "human", "patient", "patients", "biomarker",
+    "biomarkers", "process", "processes", "organelle", "membrane", "synthesis", "degradation",
+    "phosphorylation", "pyroptosis", "necrosis", "apoptosis", "keytrada", "opdivo",
+    "herceptin", "antibody", "antibodies", "monoclonal", "pd-1", "pd1", "pd-l1", "pdl1",
+    "ctla-4", "ctla4", "tgf-β", "tgfb", "stat3", "stat6", "il-2", "il-10", "ifn-γ",
+    "egfr", "her2", "erbb2", "kras", "gpx4", "cct1", "brca1", "brca2", "sting", "cgas",
+}
 
 # Curated canonical SMILES for frequent anticancer, immunotherapeutic and experimental molecules
 KNOWN_DRUG_SMILES: Dict[str, str] = {
@@ -55,10 +72,16 @@ class ChemoinformaticsEngine:
         if clean in KNOWN_DRUG_SMILES:
             return KNOWN_DRUG_SMILES[clean]
 
-        # Check if the input is already a valid SMILES string
-        mol = Chem.MolFromSmiles(name_or_smiles.strip())
-        if mol is not None:
-            return Chem.MolToSmiles(mol)
+        # Filter out biological, gene, protein, and non-chemical terms immediately
+        if clean in NON_CHEMICAL_BLACKLIST or len(clean) < 3:
+            return None
+
+        # Only invoke RDKit MolFromSmiles if the string exhibits SMILES structural characters
+        has_smiles_syntax = any(c in name_or_smiles for c in ["=", "#", "(", ")", "[", "]", "@", "\\", "/"])
+        if has_smiles_syntax:
+            mol = Chem.MolFromSmiles(name_or_smiles.strip())
+            if mol is not None:
+                return Chem.MolToSmiles(mol)
 
         # Dynamic online resolution via NCBI PubChem PUG REST API
         try:

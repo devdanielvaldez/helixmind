@@ -1,5 +1,8 @@
 """Computational in-silico biology and chemoinformatics engine."""
 
+from rdkit import RDLogger
+RDLogger.DisableLog("rdApp.*")
+
 from helixmind.insilico.chemoinformatics import ChemoinformaticsEngine, MolecularProperties
 from helixmind.insilico.clinical_simulator import ClinicalSimulator, ClinicalTrialSimulationReport, KaplanMeierCurvePoint
 from helixmind.insilico.clinvar_stratifier import ClinVarStratifier, ClinVarVariant, GenomicStratificationReport
