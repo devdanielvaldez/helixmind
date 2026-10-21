@@ -98,7 +98,7 @@ def run_pubmed_tests():
         params={"db": "pubmed", "retmode": "json", "api_key": NCBI_API_KEY, "tool": NCBI_TOOL, "email": NCBI_EMAIL}
     )
 
-    # 3. ESearch PubMed - búsqueda básica
+    # 3. ESearch PubMed - basic search
     def ext_search(d):
         r = d.get("esearchresult", {})
         if r.get("idlist"):
@@ -212,7 +212,7 @@ def run_pubmed_tests():
 def run_clinicaltrials_tests():
     console.rule("[bold magenta]2. ClinicalTrials.gov (API v2)[/bold magenta]")
 
-    # 1. Buscar estudios por condición
+    # 1. Search studies by condition
     def ext_ct(d):
         if d.get("nextPageToken"):
             vars["ctgov_page_token"] = d["nextPageToken"]
@@ -226,44 +226,44 @@ def run_clinicaltrials_tests():
         extract_fn=ext_ct
     )
 
-    # 2. Filtrar por estado de reclutamiento
+    # 2. Filter by recruitment status
     test_endpoint(
         "ClinicalTrials", "2. Filter overallStatus", "GET", f"{CTGOV_BASE}/studies",
         params={"query.cond": TERM, "filter.overallStatus": "RECRUITING,NOT_YET_RECRUITING", "pageSize": "10", "countTotal": "true"}
     )
 
-    # 3. Filtrar por fase
+    # 3. Filter by phase
     test_endpoint(
         "ClinicalTrials", "3. Filter phase advanced", "GET", f"{CTGOV_BASE}/studies",
         params={"query.cond": TERM, "filter.advanced": "AREA[Phase]PHASE3", "filter.overallStatus": "RECRUITING", "pageSize": "10", "countTotal": "true"}
     )
 
-    # 4. Por intervención y orden
+    # 4. By intervention and sorting
     test_endpoint(
         "ClinicalTrials", "4. By intervention and sort", "GET", f"{CTGOV_BASE}/studies",
         params={"query.cond": TERM, "query.intr": "pembrolizumab", "filter.overallStatus": "RECRUITING", "sort": "LastUpdatePostDate:desc", "pageSize": "10", "countTotal": "true"}
     )
 
-    # 5. Reducir con fields
+    # 5. Field projection
     test_endpoint(
         "ClinicalTrials", "5. Fields projection", "GET", f"{CTGOV_BASE}/studies",
         params={"query.cond": TERM, "fields": "NCTId,BriefTitle,OverallStatus,Phase,LeadSponsorName,StartDate", "pageSize": "15"}
     )
 
-    # 6. Paginación con pageToken
+    # 6. Pagination with pageToken
     if vars["ctgov_page_token"]:
         test_endpoint(
             "ClinicalTrials", "6. Pagination pageToken", "GET", f"{CTGOV_BASE}/studies",
             params={"query.cond": TERM, "pageSize": "10", "pageToken": vars["ctgov_page_token"]}
         )
 
-    # 7. Detalle de estudio por NCT ID
+    # 7. Study detail by NCT ID
     test_endpoint(
         "ClinicalTrials", "7. Study detail by NCT ID", "GET", f"{CTGOV_BASE}/studies/{vars['nct_id']}",
         params={"format": "json"}
     )
 
-    # 8. Estudios con resultados
+    # 8. Studies with results
     test_endpoint(
         "ClinicalTrials", "8. Studies with results", "GET", f"{CTGOV_BASE}/studies",
         params={"query.cond": TERM, "aggFilters": "results:with", "pageSize": "10", "countTotal": "true"}
@@ -293,7 +293,7 @@ def run_clinicaltrials_tests():
 def run_europepmc_tests():
     console.rule("[bold magenta]3. Europe PMC (REST API)[/bold magenta]")
 
-    # 1. Búsqueda básica (lite)
+    # 1. Basic search (lite)
     def ext_epmc(d):
         if d.get("nextCursorMark"):
             vars["epmc_cursor"] = d["nextCursorMark"]
@@ -310,54 +310,54 @@ def run_europepmc_tests():
         extract_fn=ext_epmc
     )
 
-    # 2. Búsqueda core (con abstract completo)
+    # 2. Core search (with full abstract)
     test_endpoint(
         "EuropePMC", "2. Search core open access", "GET", f"{EPMC_BASE}/search",
         params={"query": f"{TERM} AND OPEN_ACCESS:y", "format": "json", "resultType": "core", "pageSize": "5"}
     )
 
-    # 3. Solo preprints
+    # 3. Preprints only
     test_endpoint(
         "EuropePMC", "3. Preprints only (bioRxiv/medRxiv)", "GET", f"{EPMC_BASE}/search",
         params={"query": f'{TERM} AND SRC:"PPR"', "format": "json", "resultType": "lite", "pageSize": "10", "sort": "P_PDATE_D desc"}
     )
 
-    # 4. Solo PubMed con texto completo abierto
+    # 4. PubMed open access + full text only
     test_endpoint(
         "EuropePMC", "4. PubMed open access + full text", "GET", f"{EPMC_BASE}/search",
         params={"query": f"{TERM} AND SRC:MED AND OPEN_ACCESS:y AND HAS_FT:y", "format": "json", "resultType": "lite", "pageSize": "10", "sort": "CITED desc"}
     )
 
-    # 5. Paginación con cursorMark
+    # 5. Pagination with cursorMark
     test_endpoint(
         "EuropePMC", "5. Pagination cursorMark", "GET", f"{EPMC_BASE}/search",
         params={"query": TERM, "format": "json", "resultType": "lite", "pageSize": "10", "cursorMark": vars["epmc_cursor"]}
     )
 
-    # 6. Buscar por PMID
+    # 6. Search by PMID
     test_endpoint(
         "EuropePMC", "6. By PMID EXT_ID", "GET", f"{EPMC_BASE}/search",
         params={"query": f"EXT_ID:{vars['pmid']} AND SRC:MED", "format": "json", "resultType": "core"}
     )
 
-    # 7. Citas: artículos que citan a este
+    # 7. Citations: articles citing this paper
     test_endpoint(
         "EuropePMC", "7. Citations", "GET", f"{EPMC_BASE}/{vars['epmc_source']}/{vars['epmc_id']}/citations",
         params={"format": "json", "page": "1", "pageSize": "10"}
     )
 
-    # 8. Referencias: artículos que este cita
+    # 8. References: articles cited by this paper
     test_endpoint(
         "EuropePMC", "8. References", "GET", f"{EPMC_BASE}/{vars['epmc_source']}/{vars['epmc_id']}/references",
         params={"format": "json", "page": "1", "pageSize": "10"}
     )
 
-    # 9. Texto completo JATS XML
+    # 9. Full-text JATS XML
     test_endpoint(
         "EuropePMC", "9. fullTextXML", "GET", f"{EPMC_BASE}/{vars['pmcid']}/fullTextXML"
     )
 
-    # 10. Términos minados (textMinedTerms)
+    # 10. Text-mined terms (textMinedTerms)
     test_endpoint(
         "EuropePMC", "10. textMinedTerms", "GET", f"{EPMC_BASE}/{vars['epmc_source']}/{vars['epmc_id']}/textMinedTerms",
         params={"format": "json"}
@@ -369,13 +369,13 @@ def run_europepmc_tests():
         params={"format": "json", "page": "1", "pageSize": "10"}
     )
 
-    # 12. Material suplementario (HEAD check or stream check to not download large binaries)
+    # 12. Supplementary files
     test_endpoint(
         "EuropePMC", "12. Supplementary files", "HEAD", f"{EPMC_BASE}/{vars['pmcid']}/supplementaryFiles",
         params={"includeInlineImage": "false"}
     )
 
-    # 13. Campos de búsqueda
+    # 13. Search fields
     test_endpoint(
         "EuropePMC", "13. Indexed fields", "GET", f"{EPMC_BASE}/fields",
         params={"format": "json"}

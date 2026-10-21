@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field
 from helixmind import __version__
 from helixmind.api.events import EventType
 from helixmind.api.ws_manager import ws_manager
-from helixmind.autopilot.orchestrator import AutoPilotOrchestrator
 from helixmind.config import get_settings
 from helixmind.copilot import CopilotResponse, ResearchCopilot
 from helixmind.insilico import (
@@ -104,6 +103,7 @@ async def launch_investigation(
     inv_id = f"INV-{int(datetime.now().timestamp())}"
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    from helixmind.autopilot.orchestrator import AutoPilotOrchestrator
     orchestrator = AutoPilotOrchestrator(settings=settings, ollama_client=ollama)
 
     # Launch autonomous orchestration in the background

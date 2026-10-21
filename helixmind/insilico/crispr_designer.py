@@ -43,6 +43,18 @@ class CRISPRDesignReport(BaseModel):
     top_sgrnas: List[SgRNACandidate] = Field(default_factory=list)
     validation_primers: Optional[PCRPrimerPair] = None
 
+    @property
+    def top_guide_sequence(self) -> str:
+        return self.top_sgrnas[0].sequence_20nt if self.top_sgrnas else "N/A"
+
+    @property
+    def pam_site(self) -> str:
+        return self.top_sgrnas[0].pam_motif if self.top_sgrnas else "NGG"
+
+    @property
+    def on_target_score(self) -> float:
+        return self.top_sgrnas[0].on_target_score if self.top_sgrnas else 0.0
+
 
 class CRISPRDesigner:
     """Designs CRISPR-Cas9 sgRNAs with PAM detection, poly-T filtering, and PCR primers."""

@@ -118,9 +118,9 @@ class ResearchCopilot:
         lower_msg = user_message.lower()
         if "primer" in lower_msg or "crispr" in lower_msg:
             actions.append("Initiated in-silico CRISPR & PCR primer synthesis protocol")
-        if "critique" in lower_msg or "riesgo" in lower_msg or "duda" in lower_msg:
+        if "critique" in lower_msg or "risk" in lower_msg or "doubt" in lower_msg or "riesgo" in lower_msg or "duda" in lower_msg:
             actions.append("Registered adversarial caveat in Knowledge Graph")
-        if "profundiza" in lower_msg or "investiga" in lower_msg:
+        if "deepen" in lower_msg or "investigate" in lower_msg or "profundiza" in lower_msg or "investiga" in lower_msg:
             actions.append("Dispatched targeted sub-inquiry to Research Director")
 
         return CopilotResponse(

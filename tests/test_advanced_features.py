@@ -84,7 +84,7 @@ async def test_research_copilot_steering():
         mock_exec.return_value = "Based on PMID: 42669245, selenium nanocatalysts enable nose-to-brain delivery. I have designed the CRISPR primers for CD274."
         response = await copilot.chat_async(
             investigation_id="TEST-COPILOT",
-            user_message="Diseña primers de CRISPR para CD274 y cita el paper",
+            user_message="Design CRISPR primers for CD274 and cite the paper",
             topic="Glioblastoma",
             journal=journal,
         )

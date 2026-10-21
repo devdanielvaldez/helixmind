@@ -68,6 +68,7 @@ class ScientificPaperGenerator:
         """Progressively author and assemble an exhaustive scientific publication in Markdown."""
         editor = self.create_editor_agent()
         editor.log("Authoring landmark publication with in-text citations and empirical proof...", style="bold green")
+        console.print("  [cyan]• Sections 1-2:[/cyan] Drafting Formal Structured Abstract & Pathological Landscape Introduction...")
 
         date_str = datetime.now().strftime("%B %d, %Y")
         slug = "".join([c if c.isalnum() else "_" for c in topic.lower()])[:30].strip("_")
@@ -116,6 +117,7 @@ class ScientificPaperGenerator:
         # ---------------------------------------------------------------------
         # 2. Epistemic Knowledge Graph & Network Topology
         # ---------------------------------------------------------------------
+        console.print("  [cyan]• Section 3:[/cyan] Assembling Epistemic Knowledge Graph & Network Topology...")
         graph_mermaid = knowledge_graph.to_mermaid(max_edges=40)
         graph_table = knowledge_graph.to_epistemic_matrix_markdown()
         graph_discussion = literature_synthesis or "Cross-examination of literature highlights critical hub nodes and feedback loops governing target activation."
@@ -124,6 +126,7 @@ class ScientificPaperGenerator:
         # ---------------------------------------------------------------------
         # 3. Format DepMap Functional Genomics Table
         # ---------------------------------------------------------------------
+        console.print("  [cyan]• Sections 4-6:[/cyan] Integrating DepMap Chronos Essentiality, openFDA FAERS Safety & ClinVar Stratification...")
         depmap_rows = []
         if depmap_evaluations:
             for d in depmap_evaluations:
@@ -215,6 +218,7 @@ class ScientificPaperGenerator:
         # ---------------------------------------------------------------------
         # 10. Format CRISPR sgRNA & PCR Primers
         # ---------------------------------------------------------------------
+        console.print("  [cyan]• Sections 7-9:[/cyan] Formulating Single-Cell TME Interactome, CRISPR sgRNA Guides & In-Silico Chemistry...")
         crispr_rows = []
         if crispr_design:
             guides = getattr(crispr_design, "top_sgrnas", [])
@@ -247,6 +251,7 @@ class ScientificPaperGenerator:
         # ---------------------------------------------------------------------
         # 11. Format Peer Review Tribunal Table
         # ---------------------------------------------------------------------
+        console.print("  [cyan]• Sections 10-12:[/cyan] Embedding Adversarial Peer Review Tribunal Scores & Biomedical Lexicon...")
         tribunal_rows = []
         if tribunal_consensus:
             reviews = getattr(tribunal_consensus, "reviews", [])
@@ -286,6 +291,7 @@ class ScientificPaperGenerator:
         # ---------------------------------------------------------------------
         # 13. Format Hypotheses & Deep Causal Signaling Cascades
         # ---------------------------------------------------------------------
+        console.print("  [cyan]• Sections 13-15:[/cyan] Synthesizing Hypotheses, Experimental Roadmap & Cross-Referenced Bibliography...")
         hypotheses_markdown = []
         for i, hyp in enumerate(hypotheses, 1):
             verdict_badge = hyp.critique_verdict or "Plausible with Caveats"

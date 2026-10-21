@@ -1,7 +1,9 @@
 """Configuration settings for HelixMind platform."""
 
 from functools import lru_cache
+import os
 from pathlib import Path
+from typing import Any, Dict
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -39,6 +41,44 @@ class Settings(BaseSettings):
     default_literature_limit: int = Field(
         default=5,
         description="Number of papers to fetch and analyze per topic",
+    )
+    default_trials_limit: int = Field(
+        default=4,
+        description="Number of clinical trials to fetch and analyze per topic",
+    )
+    default_depth: str = Field(
+        default="deep",
+        description="Default investigation depth: deep, exhaustive, or institutional",
+    )
+
+    # In-Silico & Rigor Module Toggles
+    enable_depmap: bool = Field(
+        default=True,
+        description="Enable DepMap cancer dependency verification",
+    )
+    enable_pharmacovigilance: bool = Field(
+        default=True,
+        description="Enable openFDA FAERS adverse reaction surveillance",
+    )
+    enable_clinvar: bool = Field(
+        default=True,
+        description="Enable NCBI ClinVar genomic stratification",
+    )
+    enable_tme: bool = Field(
+        default=True,
+        description="Enable Single-Cell TME interactome mapping",
+    )
+    enable_crispr: bool = Field(
+        default=True,
+        description="Enable CRISPR sgRNA and primer design",
+    )
+    enable_tribunal: bool = Field(
+        default=True,
+        description="Enable Adversarial Peer-Review Tribunal",
+    )
+    export_formats: str = Field(
+        default="markdown,pdf,latex,bibtex",
+        description="Comma-separated default export formats (markdown, pdf, latex, bibtex)",
     )
 
     # Biomedical APIs Configuration
@@ -95,3 +135,42 @@ def get_settings() -> Settings:
     settings.cache_dir.mkdir(parents=True, exist_ok=True)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     return settings
+
+
+def save_env_variables(updates: Dict[str, Any], env_path: Path = Path(".env")) -> None:
+    """Safely update or add key-value pairs in the .env file."""
+    lines = []
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+
+    str_updates = {k.upper(): str(v) for k, v in updates.items()}
+    updated_keys = set()
+
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip().upper()
+            if key in str_updates:
+                new_lines.append(f"{key}={str_updates[key]}")
+                updated_keys.add(key)
+                continue
+        new_lines.append(line)
+
+    for k, v in str_updates.items():
+        if k not in updated_keys:
+            new_lines.append(f"{k}={v}")
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def update_settings(updates: Dict[str, Any], persist: bool = True, env_path: Path = Path(".env")) -> Settings:
+    """Update settings in environment and clear cached singleton. Optionally persists to .env."""
+    for k, v in updates.items():
+        os.environ[k.upper()] = str(v)
+
+    if persist:
+        save_env_variables(updates, env_path=env_path)
+
+    get_settings.cache_clear()
+    return get_settings()
