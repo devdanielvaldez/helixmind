@@ -33,6 +33,16 @@ class GraphEdge(BaseModel):
     citation: Optional[str] = None
     weight: float = Field(default=1.0, ge=0.0, le=1.0)
 
+    @property
+    def relation_type(self) -> str:
+        """Alias for relation."""
+        return self.relation
+
+    @property
+    def evidence_summary(self) -> str:
+        """Alias for evidence."""
+        return self.evidence
+
 
 class KnowledgeGraph(BaseModel):
     """In-memory biomedical & epistemic knowledge graph connecting evidence, concepts, hypotheses, theories, and doubts."""

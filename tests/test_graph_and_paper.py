@@ -28,6 +28,9 @@ def test_knowledge_graph_construction():
     assert len(graph.nodes) == 2
     assert len(graph.edges) == 1
     assert edge.relation == "inhibits"
+    assert edge.relation_type == "inhibits"
+    assert edge.evidence_summary == "Binding leads to internalization and degradation"
+    assert isinstance(graph.edges, list)
 
     # Test Mermaid generation
     mermaid = graph.to_mermaid()
@@ -93,6 +96,42 @@ def test_epistemic_knowledge_graph_connections():
     assert '{{"HYPOTHESIS:' in mermaid
     assert '[/"DOUBT / RISK:' in mermaid
     assert "-.-|challenges|-.-" in mermaid
+
+
+def test_knowledge_graph_edge_display_and_robustness():
+    from rich.console import Console
+    from rich.markup import escape
+
+    graph = KnowledgeGraph()
+    graph.add_edge(
+        source_name="CDK4/6 [Inhibitor]",
+        source_category="drug",
+        target_name="RB1",
+        target_category="protein",
+        relation="inhibits",
+        evidence="Blocks cell cycle progression from G1 to S phase in dormant micrometastasis models [PMID:12345].",
+    )
+    graph.add_edge(
+        source_name="PI3K",
+        source_category="protein",
+        target_name="AKT",
+        target_category="protein",
+        relation="activates",
+        evidence="",
+    )
+
+    console = Console(record=True)
+    edges_sample = list(graph.edges.values()) if hasattr(graph.edges, "values") else list(graph.edges)
+    assert len(edges_sample) == 2
+    for edge in edges_sample[:4]:
+        rel = getattr(edge, "relation", getattr(edge, "relation_type", "interacts_with"))
+        ev = getattr(edge, "evidence", getattr(edge, "evidence_summary", ""))
+        ev_snippet = f" [dim]({escape(ev[:60] + ('...' if len(ev) > 60 else ''))})[/dim]" if ev else ""
+        console.print(f"   [cyan]{escape(edge.source_id)}[/cyan] ──[bold magenta]{escape(rel)}[/bold magenta]──> [cyan]{escape(edge.target_id)}[/cyan]{ev_snippet}")
+
+    output = console.export_text()
+    assert "inhibits" in output
+    assert "activates" in output
 
 
 def test_research_journal_and_glossary():

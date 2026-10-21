@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Callable, List, Optional
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -280,8 +281,12 @@ class AutoPilotOrchestrator:
         notify(f"Knowledge Graph updated: {len(knowledge_graph.nodes)} nodes, {len(knowledge_graph.edges)} directed edges.")
         if knowledge_graph.edges:
             console.print("  [dim]Sample Mined Biological Interactions:[/dim]")
-            for edge in list(knowledge_graph.edges.values())[:4]:
-                console.print(f"   [cyan]{edge.source_id}[/cyan] ──[bold magenta]{edge.relation_type}[/bold magenta]──> [cyan]{edge.target_id}[/cyan] [dim]({edge.evidence_summary[:60]}...)[/dim]")
+            edges_sample = list(knowledge_graph.edges.values()) if hasattr(knowledge_graph.edges, "values") else list(knowledge_graph.edges)
+            for edge in edges_sample[:4]:
+                rel = getattr(edge, "relation", getattr(edge, "relation_type", "interacts_with"))
+                ev = getattr(edge, "evidence", getattr(edge, "evidence_summary", ""))
+                ev_snippet = f" [dim]({escape(ev[:60] + ('...' if len(ev) > 60 else ''))})[/dim]" if ev else ""
+                console.print(f"   [cyan]{escape(edge.source_id)}[/cyan] ──[bold magenta]{escape(rel)}[/bold magenta]──> [cyan]{escape(edge.target_id)}[/cyan]{ev_snippet}")
         await emit(
             EventType.GRAPH_UPDATED,
             f"Knowledge Graph updated: {len(knowledge_graph.nodes)} nodes, {len(knowledge_graph.edges)} directed edges.",
