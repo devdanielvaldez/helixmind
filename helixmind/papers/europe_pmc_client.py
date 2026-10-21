@@ -33,52 +33,67 @@ class EuropePMCClient:
         if open_access_only:
             final_query += " AND OPEN_ACCESS:y"
 
-        params = {
-            "query": final_query,
-            "format": "json",
-            "resultType": "core",
-            "pageSize": str(limit),
-            "sort": sort,
-        }
+        papers: List[Paper] = []
+        cursor = "*"
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            res = await client.get(f"{self.base_url}/search", params=params)
-            res.raise_for_status()
-            data = res.json()
-            raw_results = data.get("resultList", {}).get("result", [])
+            while len(papers) < limit and cursor:
+                batch_size = min(max(1, limit - len(papers)), 1000)
+                params: Dict[str, Any] = {
+                    "query": final_query,
+                    "format": "json",
+                    "resultType": "core",
+                    "pageSize": str(batch_size),
+                    "cursorMark": cursor,
+                }
+                if sort:
+                    params["sort"] = sort
 
-            papers: List[Paper] = []
-            for item in raw_results:
-                paper_id = item.get("id", "")
-                title = item.get("title", "").rstrip(".")
-                abstract = item.get("abstractText", "") or title
-                author_string = item.get("authorString", "")
-                authors = [a.strip() for a in author_string.split(",") if a.strip()]
+                res = await client.get(f"{self.base_url}/search", params=params)
+                res.raise_for_status()
+                data = res.json()
+                raw_results = data.get("resultList", {}).get("result", [])
+                if not raw_results:
+                    break
 
-                pmid = item.get("pmid")
-                pmcid = item.get("pmcid")
-                source = item.get("source", "MED")
+                for item in raw_results:
+                    paper_id = item.get("id", "")
+                    title = item.get("title", "").rstrip(".")
+                    abstract = item.get("abstractText", "") or title
+                    author_string = item.get("authorString", "")
+                    authors = [a.strip() for a in author_string.split(",") if a.strip()]
 
-                pub_year = None
-                pub_year_raw = item.get("pubYear")
-                if pub_year_raw and str(pub_year_raw).isdigit():
-                    pub_year = int(pub_year_raw)
+                    pmid = item.get("pmid")
+                    pmcid = item.get("pmcid")
+                    source = item.get("source", "MED")
 
-                paper = Paper(
-                    id=f"{source}:{paper_id}",
-                    source="europe_pmc" if source != "PPR" else "preprint",
-                    pmid=pmid,
-                    pmcid=pmcid,
-                    title=title,
-                    abstract=abstract,
-                    authors=authors,
-                    journal=item.get("journalTitle"),
-                    pub_year=pub_year,
-                    doi=item.get("doi"),
-                    is_open_access=item.get("isOpenAccess") == "Y",
-                    cited_by_count=item.get("citedByCount", 0),
-                )
-                papers.append(paper)
+                    pub_year = None
+                    pub_year_raw = item.get("pubYear")
+                    if pub_year_raw and str(pub_year_raw).isdigit():
+                        pub_year = int(pub_year_raw)
+
+                    paper = Paper(
+                        id=f"{source}:{paper_id}",
+                        source="europe_pmc" if source != "PPR" else "preprint",
+                        pmid=pmid,
+                        pmcid=pmcid,
+                        title=title,
+                        abstract=abstract,
+                        authors=authors,
+                        journal=item.get("journalTitle"),
+                        pub_year=pub_year,
+                        doi=item.get("doi"),
+                        is_open_access=item.get("isOpenAccess") == "Y",
+                        cited_by_count=item.get("citedByCount", 0),
+                    )
+                    papers.append(paper)
+                    if len(papers) >= limit:
+                        break
+
+                next_cursor = data.get("nextCursorMark")
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
 
             return papers
 
@@ -97,52 +112,67 @@ class EuropePMCClient:
         if open_access_only:
             final_query += " AND OPEN_ACCESS:y"
 
-        params = {
-            "query": final_query,
-            "format": "json",
-            "resultType": "core",
-            "pageSize": str(limit),
-            "sort": sort,
-        }
+        papers: List[Paper] = []
+        cursor = "*"
 
         with httpx.Client(timeout=self.timeout) as client:
-            res = client.get(f"{self.base_url}/search", params=params)
-            res.raise_for_status()
-            data = res.json()
-            raw_results = data.get("resultList", {}).get("result", [])
+            while len(papers) < limit and cursor:
+                batch_size = min(max(1, limit - len(papers)), 1000)
+                params: Dict[str, Any] = {
+                    "query": final_query,
+                    "format": "json",
+                    "resultType": "core",
+                    "pageSize": str(batch_size),
+                    "cursorMark": cursor,
+                }
+                if sort:
+                    params["sort"] = sort
 
-            papers: List[Paper] = []
-            for item in raw_results:
-                paper_id = item.get("id", "")
-                title = item.get("title", "").rstrip(".")
-                abstract = item.get("abstractText", "") or title
-                author_string = item.get("authorString", "")
-                authors = [a.strip() for a in author_string.split(",") if a.strip()]
+                res = client.get(f"{self.base_url}/search", params=params)
+                res.raise_for_status()
+                data = res.json()
+                raw_results = data.get("resultList", {}).get("result", [])
+                if not raw_results:
+                    break
 
-                pmid = item.get("pmid")
-                pmcid = item.get("pmcid")
-                source = item.get("source", "MED")
+                for item in raw_results:
+                    paper_id = item.get("id", "")
+                    title = item.get("title", "").rstrip(".")
+                    abstract = item.get("abstractText", "") or title
+                    author_string = item.get("authorString", "")
+                    authors = [a.strip() for a in author_string.split(",") if a.strip()]
 
-                pub_year = None
-                pub_year_raw = item.get("pubYear")
-                if pub_year_raw and str(pub_year_raw).isdigit():
-                    pub_year = int(pub_year_raw)
+                    pmid = item.get("pmid")
+                    pmcid = item.get("pmcid")
+                    source = item.get("source", "MED")
 
-                paper = Paper(
-                    id=f"{source}:{paper_id}",
-                    source="europe_pmc" if source != "PPR" else "preprint",
-                    pmid=pmid,
-                    pmcid=pmcid,
-                    title=title,
-                    abstract=abstract,
-                    authors=authors,
-                    journal=item.get("journalTitle"),
-                    pub_year=pub_year,
-                    doi=item.get("doi"),
-                    is_open_access=item.get("isOpenAccess") == "Y",
-                    cited_by_count=item.get("citedByCount", 0),
-                )
-                papers.append(paper)
+                    pub_year = None
+                    pub_year_raw = item.get("pubYear")
+                    if pub_year_raw and str(pub_year_raw).isdigit():
+                        pub_year = int(pub_year_raw)
+
+                    paper = Paper(
+                        id=f"{source}:{paper_id}",
+                        source="europe_pmc" if source != "PPR" else "preprint",
+                        pmid=pmid,
+                        pmcid=pmcid,
+                        title=title,
+                        abstract=abstract,
+                        authors=authors,
+                        journal=item.get("journalTitle"),
+                        pub_year=pub_year,
+                        doi=item.get("doi"),
+                        is_open_access=item.get("isOpenAccess") == "Y",
+                        cited_by_count=item.get("citedByCount", 0),
+                    )
+                    papers.append(paper)
+                    if len(papers) >= limit:
+                        break
+
+                next_cursor = data.get("nextCursorMark")
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
 
             return papers
 

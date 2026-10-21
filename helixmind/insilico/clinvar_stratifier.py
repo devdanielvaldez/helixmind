@@ -95,7 +95,7 @@ class ClinVarStratifier:
                         if self.settings.ncbi_api_key:
                             s_params["api_key"] = self.settings.ncbi_api_key
 
-                        s_res = await client.get(summary_url, params=s_params)
+                        s_res = await client.post(summary_url, data=s_params)
                         if s_res.status_code == 200:
                             s_data = s_res.json().get("result", {})
                             for vid in idlist:
