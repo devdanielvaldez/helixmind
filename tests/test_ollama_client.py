@@ -2,12 +2,32 @@
 
 import pytest
 from pydantic import BaseModel
-from helixmind.llm.ollama_client import OllamaClient
+from helixmind.llm.ollama_client import (
+    OllamaClient,
+    OllamaResponseError,
+    OllamaModelNotFoundError,
+    _extract_ollama_error_message,
+)
+import httpx
 
 
 class MockScientificSummary(BaseModel):
     title: str
     key_finding: str
+
+
+def test_extract_ollama_error_message():
+    # JSON with "error" field
+    res_json = httpx.Response(500, json={"error": "model 'deepseek-r1:1.5b' requires 2.5 GiB VRAM, only 1.2 GiB free"})
+    assert "requires 2.5 GiB VRAM" in _extract_ollama_error_message(res_json)
+
+    # Plain text error
+    res_text = httpx.Response(500, text="Internal Server Error")
+    assert _extract_ollama_error_message(res_text) == "Internal Server Error"
+
+    # Empty body
+    res_empty = httpx.Response(500, content=b"")
+    assert "500" in _extract_ollama_error_message(res_empty)
 
 
 def test_clean_json_text_pure_json():

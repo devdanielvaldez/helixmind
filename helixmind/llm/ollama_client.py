@@ -39,6 +39,17 @@ class OllamaResponseError(OllamaError):
     pass
 
 
+def _extract_ollama_error_message(res: httpx.Response) -> str:
+    """Extract descriptive error message from Ollama response JSON or text."""
+    try:
+        data = res.json()
+        if isinstance(data, dict) and "error" in data:
+            return str(data["error"])
+    except Exception:
+        pass
+    return res.text.strip() if res.text else f"HTTP {res.status_code} {res.reason_phrase}"
+
+
 class OllamaClient:
     """Client for Ollama REST API supporting chat, streaming, and embeddings."""
 
@@ -145,19 +156,71 @@ class OllamaClient:
         if format:
             payload["format"] = format
 
+        last_error: Optional[Exception] = None
+
         for attempt in range(3):
             try:
                 with self._sync_client() as client:
                     res = client.post("/api/chat", json=payload)
+                    if res.status_code == 200:
+                        return res.json()
+
+                    err_detail = _extract_ollama_error_message(res)
                     if res.status_code == 404:
-                        raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama.")
-                    res.raise_for_status()
-                    return res.json()
-            except httpx.RequestError as e:
+                        raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama: {err_detail}")
+
+                    # If Ollama failed with 500 when format='json' was requested (common grammar crash on reasoning models),
+                    # retry immediately without format='json'
+                    if res.status_code == 500 and payload.get("format") == "json":
+                        payload_no_fmt = dict(payload)
+                        payload_no_fmt.pop("format", None)
+                        fb_res = client.post("/api/chat", json=payload_no_fmt)
+                        if fb_res.status_code == 200:
+                            return fb_res.json()
+
+                    if res.status_code in (500, 502, 503, 504) and attempt < 2:
+                        time.sleep(2.0)
+                        continue
+
+                    raise OllamaResponseError(f"Ollama server error ({res.status_code}) for model '{chosen_model}': {err_detail}")
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                last_error = e
                 if attempt < 2:
                     time.sleep(2.0)
                     continue
-                raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
+            except OllamaResponseError as e:
+                last_error = e
+                if chosen_model != self.default_model:
+                    break
+                if attempt < 2:
+                    time.sleep(2.0)
+                    continue
+                raise
+            except OllamaModelNotFoundError:
+                if chosen_model != self.default_model:
+                    break
+                raise
+
+        # If a non-default model failed (e.g. reasoning_model crashed with 500/OOM),
+        # fallback to default_model to preserve investigation continuity
+        if chosen_model != self.default_model:
+            payload_fallback = dict(payload)
+            payload_fallback["model"] = self.default_model
+            try:
+                with self._sync_client() as client:
+                    fb_res = client.post("/api/chat", json=payload_fallback)
+                    if fb_res.status_code == 200:
+                        return fb_res.json()
+                    fb_err = _extract_ollama_error_message(fb_res)
+                    raise OllamaResponseError(f"Ollama fallback error ({fb_res.status_code}) for '{self.default_model}': {fb_err}")
+            except Exception as fb_exc:
+                raise OllamaResponseError(
+                    f"Model '{chosen_model}' failed ({last_error}) and fallback '{self.default_model}' failed ({fb_exc})"
+                ) from fb_exc
+
+        if isinstance(last_error, (OllamaResponseError, OllamaModelNotFoundError)):
+            raise last_error
+        raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {last_error}") from last_error
 
     async def chat_async(
         self,
@@ -178,19 +241,71 @@ class OllamaClient:
         if format:
             payload["format"] = format
 
+        last_error: Optional[Exception] = None
+
         for attempt in range(3):
             try:
                 async with self._async_client() as client:
                     res = await client.post("/api/chat", json=payload)
+                    if res.status_code == 200:
+                        return res.json()
+
+                    err_detail = _extract_ollama_error_message(res)
                     if res.status_code == 404:
-                        raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama.")
-                    res.raise_for_status()
-                    return res.json()
-            except httpx.RequestError as e:
+                        raise OllamaModelNotFoundError(f"Model '{chosen_model}' not found in Ollama: {err_detail}")
+
+                    # If Ollama failed with 500 when format='json' was requested (common grammar crash on reasoning models),
+                    # retry immediately without format='json'
+                    if res.status_code == 500 and payload.get("format") == "json":
+                        payload_no_fmt = dict(payload)
+                        payload_no_fmt.pop("format", None)
+                        fb_res = await client.post("/api/chat", json=payload_no_fmt)
+                        if fb_res.status_code == 200:
+                            return fb_res.json()
+
+                    if res.status_code in (500, 502, 503, 504) and attempt < 2:
+                        await asyncio.sleep(2.0)
+                        continue
+
+                    raise OllamaResponseError(f"Ollama server error ({res.status_code}) for model '{chosen_model}': {err_detail}")
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                last_error = e
                 if attempt < 2:
                     await asyncio.sleep(2.0)
                     continue
-                raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {e}") from e
+            except OllamaResponseError as e:
+                last_error = e
+                if chosen_model != self.default_model:
+                    break
+                if attempt < 2:
+                    await asyncio.sleep(2.0)
+                    continue
+                raise
+            except OllamaModelNotFoundError:
+                if chosen_model != self.default_model:
+                    break
+                raise
+
+        # If a non-default model failed (e.g. reasoning_model crashed with 500/OOM),
+        # fallback to default_model to preserve investigation continuity
+        if chosen_model != self.default_model:
+            payload_fallback = dict(payload)
+            payload_fallback["model"] = self.default_model
+            try:
+                async with self._async_client() as client:
+                    fb_res = await client.post("/api/chat", json=payload_fallback)
+                    if fb_res.status_code == 200:
+                        return fb_res.json()
+                    fb_err = _extract_ollama_error_message(fb_res)
+                    raise OllamaResponseError(f"Ollama fallback error ({fb_res.status_code}) for '{self.default_model}': {fb_err}")
+            except Exception as fb_exc:
+                raise OllamaResponseError(
+                    f"Model '{chosen_model}' failed ({last_error}) and fallback '{self.default_model}' failed ({fb_exc})"
+                ) from fb_exc
+
+        if isinstance(last_error, (OllamaResponseError, OllamaModelNotFoundError)):
+            raise last_error
+        raise OllamaConnectionError(f"Connection failed to Ollama at {self.base_url}: {last_error}") from last_error
 
     def chat_stream(
         self,
@@ -210,7 +325,9 @@ class OllamaClient:
 
         with self._sync_client() as client:
             with client.stream("POST", "/api/chat", json=payload) as response:
-                response.raise_for_status()
+                if response.is_error:
+                    err_msg = _extract_ollama_error_message(response)
+                    raise OllamaResponseError(f"Ollama streaming error ({response.status_code}) for '{chosen_model}': {err_msg}")
                 for line in response.iter_lines():
                     if line:
                         chunk = json.loads(line)
@@ -236,7 +353,9 @@ class OllamaClient:
 
         async with self._async_client() as client:
             async with client.stream("POST", "/api/chat", json=payload) as response:
-                response.raise_for_status()
+                if response.is_error:
+                    err_msg = _extract_ollama_error_message(response)
+                    raise OllamaResponseError(f"Ollama streaming error ({response.status_code}) for '{chosen_model}': {err_msg}")
                 async for line in response.aiter_lines():
                     if line:
                         chunk = json.loads(line)
@@ -364,12 +483,21 @@ class OllamaClient:
         else:
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
 
-        response = self.chat(
-            messages=augmented_messages,
-            model=model,
-            temperature=temperature,
-            format="json",
-        )
+        try:
+            response = self.chat(
+                messages=augmented_messages,
+                model=model,
+                temperature=temperature,
+                format="json",
+            )
+        except Exception:
+            # Fallback without format="json" if Ollama grammar sampler encounters an issue
+            response = self.chat(
+                messages=augmented_messages,
+                model=model,
+                temperature=temperature,
+                format=None,
+            )
         raw_text = response.get("message", {}).get("content", "")
         clean_json = self._clean_json_text(raw_text)
         try:
@@ -408,12 +536,21 @@ class OllamaClient:
         else:
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
 
-        response = await self.chat_async(
-            messages=augmented_messages,
-            model=model,
-            temperature=temperature,
-            format="json",
-        )
+        try:
+            response = await self.chat_async(
+                messages=augmented_messages,
+                model=model,
+                temperature=temperature,
+                format="json",
+            )
+        except Exception:
+            # Fallback without format="json" if Ollama grammar sampler encounters an issue
+            response = await self.chat_async(
+                messages=augmented_messages,
+                model=model,
+                temperature=temperature,
+                format=None,
+            )
         raw_text = response.get("message", {}).get("content", "")
         clean_json = self._clean_json_text(raw_text)
         try:

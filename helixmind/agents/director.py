@@ -221,6 +221,7 @@ class ResearchDirector:
                     for sp in sub_papers:
                         if not any(p.id == sp.id for p in active_papers):
                             active_papers.append(sp)
+                        agent.log(f"Reading retrieved publication: '{sp.title}' ({sp.pub_year or 'N/A'})", style="dim green")
                     await index.index_documents_async(sub_papers)
                     for sp in sub_papers:
                         journal.record_extracted_evidence(
@@ -246,6 +247,7 @@ class ResearchDirector:
             context=combined_context[:800],
         )
 
+        agent.log(f"Findings & Discoveries:\n{finding.strip()}", style="bold green")
         journal.log(agent.name, mission.agent_role, finding[:250], category="discovery")
 
         # 4. If Terminology/Ontology Agent, parse defined terms into journal glossary

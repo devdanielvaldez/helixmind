@@ -58,11 +58,25 @@ class BaseAgent:
         ]
 
         temp = temperature if temperature is not None else self.temperature
-        reply = await self.client.chat_with_continuation_async(
-            messages=messages,
-            model=self.model,
-            temperature=temp,
-        )
+        try:
+            reply = await self.client.chat_with_continuation_async(
+                messages=messages,
+                model=self.model,
+                temperature=temp,
+            )
+        except Exception as e:
+            if self.model != self.client.default_model:
+                self.log(
+                    f"Model '{self.model}' execution warning ({e}). Retrying with default model '{self.client.default_model}'...",
+                    style="yellow",
+                )
+                reply = await self.client.chat_with_continuation_async(
+                    messages=messages,
+                    model=self.client.default_model,
+                    temperature=temp,
+                )
+            else:
+                raise
 
         # Record conversation in short-term memory
         self.memory.append({"role": "user", "content": task_instruction})
@@ -106,11 +120,25 @@ class BaseAgent:
                 {"role": "user", "content": section_prompt},
             ]
 
-            content = await self.client.chat_with_continuation_async(
-                messages=messages,
-                model=self.model,
-                temperature=temp,
-            )
+            try:
+                content = await self.client.chat_with_continuation_async(
+                    messages=messages,
+                    model=self.model,
+                    temperature=temp,
+                )
+            except Exception as e:
+                if self.model != self.client.default_model:
+                    self.log(
+                        f"Model '{self.model}' section warning ({e}). Retrying with default model '{self.client.default_model}'...",
+                        style="yellow",
+                    )
+                    content = await self.client.chat_with_continuation_async(
+                        messages=messages,
+                        model=self.client.default_model,
+                        temperature=temp,
+                    )
+                else:
+                    raise
             results[title] = content.strip()
             rolling_context += f"- **{title}**: {content[:150].strip()}...\n"
 
@@ -135,9 +163,23 @@ class BaseAgent:
             {"role": "user", "content": full_user_prompt},
         ]
 
-        return await self.client.chat_structured_async(
-            messages=messages,
-            schema=schema,
-            model=self.model,
-            temperature=temperature,
-        )
+        try:
+            return await self.client.chat_structured_async(
+                messages=messages,
+                schema=schema,
+                model=self.model,
+                temperature=temperature,
+            )
+        except Exception as e:
+            if self.model != self.client.default_model:
+                self.log(
+                    f"Model '{self.model}' structured generation warning ({e}). Retrying with default model '{self.client.default_model}'...",
+                    style="yellow",
+                )
+                return await self.client.chat_structured_async(
+                    messages=messages,
+                    schema=schema,
+                    model=self.client.default_model,
+                    temperature=temperature,
+                )
+            raise

@@ -34,8 +34,12 @@ import {
   Zap,
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
-const WS_BASE = 'ws://localhost:8000';
+const API_BASE = typeof window !== 'undefined' && window.location.port !== '5173'
+  ? window.location.origin
+  : 'http://localhost:8000';
+const WS_BASE = typeof window !== 'undefined' && window.location.port !== '5173'
+  ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+  : 'ws://localhost:8000';
 
 export default function App() {
   // Navigation & View Mode
