@@ -158,6 +158,143 @@ class AgentFactory:
             ollama_client=self.client,
         )
 
+    def create_evidence_curator(self) -> BaseAgent:
+        """Spawn the Evidence Curator agent (Dr. Librarian) to screen and validate ingested papers."""
+        system_prompt = (
+            "You are Dr. Librarian, a Principal Information Scientist & Biomedical Evidence Curator.\n"
+            "Your mission is to rigorously screen publications and clinical trials for biological relevance, "
+            "filter noise, verify peer-reviewed provenance, and curate key abstracts for mechanistic analysis."
+        )
+        return BaseAgent(
+            name="Dr. Librarian",
+            role="Biomedical Literature & Evidence Curator",
+            goal="Screen and validate multi-source publications and clinical trials for target relevance",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.2,
+            ollama_client=self.client,
+        )
+
+    def create_knowledge_graph_specialist(self) -> BaseAgent:
+        """Spawn Dr. Graph for biological interactome topology and causal edge extraction."""
+        system_prompt = (
+            "You are Dr. Graph, a Systems Biologist and Epistemic Network Topologist.\n"
+            "Your task is to extract causal molecular interactions (inhibits, stimulates, binds, phosphorylates) "
+            "from literature and establish directed knowledge graph topology."
+        )
+        return BaseAgent(
+            name="Dr. Graph",
+            role="Systems Biology & Knowledge Graph Specialist",
+            goal="Extract directed causal relations and construct epistemic graph topology",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.2,
+            ollama_client=self.client,
+        )
+
+    def create_depmap_specialist(self) -> BaseAgent:
+        """Spawn Dr. DepMap for Broad Institute Chronos dependency audit."""
+        system_prompt = (
+            "You are Dr. DepMap, a Functional Genomics and Cancer Dependency Specialist.\n"
+            "Your task is to audit target gene essentiality across human cancer cell lines, "
+            "evaluate Chronos CRISPR knockout scores, and verify therapeutic actionability."
+        )
+        return BaseAgent(
+            name="Dr. DepMap",
+            role="Functional Genomics & Cancer Dependency Specialist",
+            goal="Audit functional essentiality and Chronos scores across human cancer cell lines",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.2,
+            ollama_client=self.client,
+        )
+
+    def create_pharmacovigilance_specialist(self) -> BaseAgent:
+        """Spawn Dr. Pharmacovigilance for openFDA FAERS adverse event surveillance."""
+        system_prompt = (
+            "You are Dr. Pharmacovigilance, a Clinical Safety and Post-Marketing Surveillance Specialist.\n"
+            "Your task is to query FDA FAERS reports, detect real-world human toxicity signals, "
+            "and compute safety risk indices for candidate interventions."
+        )
+        return BaseAgent(
+            name="Dr. Pharmacovigilance",
+            role="Clinical Safety & Post-Marketing Surveillance Specialist",
+            goal="Monitor human adverse event reports and safety signals via openFDA FAERS API",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.2,
+            ollama_client=self.client,
+        )
+
+    def create_clinvar_specialist(self) -> BaseAgent:
+        """Spawn Dr. ClinVar for NCBI ClinVar precision patient stratification."""
+        system_prompt = (
+            "You are Dr. ClinVar, a Clinical Genomics and Molecular Pathologist.\n"
+            "Your task is to interrogate NCBI ClinVar for verified pathogenic alterations, "
+            "resistance gatekeeper mutations, and precision responder biomarker criteria."
+        )
+        return BaseAgent(
+            name="Dr. ClinVar",
+            role="Clinical Genomics & Molecular Pathologist",
+            goal="Identify verified pathogenic alterations and formulate precision recruitment criteria",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.2,
+            ollama_client=self.client,
+        )
+
+    def create_tme_specialist(self) -> BaseAgent:
+        """Spawn Dr. TME for single-cell tumor microenvironment interactome deconvolution."""
+        system_prompt = (
+            "You are Dr. TME, a Single-Cell Transcriptomics & Tumor Microenvironment Specialist.\n"
+            "Your task is to deconvolute stromal and immune infiltrating cell types, "
+            "map paracrine ligand-receptor axes, and quantify immunosuppression indices."
+        )
+        return BaseAgent(
+            name="Dr. TME",
+            role="Single-Cell Transcriptomics & Microenvironment Specialist",
+            goal="Deconvolute tumor microenvironment and map active paracrine signaling axes",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.2,
+            ollama_client=self.client,
+        )
+
+    def create_crispr_specialist(self) -> BaseAgent:
+        """Spawn Dr. CRISPR for sgRNA guide design and laboratory validation primers."""
+        system_prompt = (
+            "You are Dr. CRISPR, a Genome Editing & Primer Design Bioinformatician.\n"
+            "Your task is to compute optimal Cas9 sgRNA guides, calculate on-target cleavage scores, "
+            "design Golden Gate cloning oligos, and generate PCR validation primer pairs."
+        )
+        return BaseAgent(
+            name="Dr. CRISPR",
+            role="Genome Editing & Primer Design Bioinformatician",
+            goal="Design optimal sgRNA guides and PCR validation primers for laboratory knockout",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.2,
+            ollama_client=self.client,
+        )
+
+    def create_paper_editor(self) -> BaseAgent:
+        """Spawn Dr. Editor for landmark scientific monograph synthesis."""
+        system_prompt = (
+            "You are Dr. Editor, Editor-in-Chief of a high-impact biomedical journal (Nature / Cell standard).\n"
+            "Your objective is to author an exhaustive, deeply academic, and rigorous scientific paper in Markdown.\n"
+            "Maintain exceptional scientific rigor, weave in bracketed citations [1], [2], [3] throughout the text, "
+            "explain biochemical mechanisms step-by-step with signaling arrows, and demand empirical proof."
+        )
+        return BaseAgent(
+            name="Dr. Editor",
+            role="Editor-in-Chief & Lead Scientific Author",
+            goal="Synthesize multi-agent discoveries into a landmark scientific paper with formal in-text citations",
+            system_prompt=system_prompt,
+            model=self.default_model,
+            temperature=0.3,
+            ollama_client=self.client,
+        )
+
     def create_custom_agent(
         self,
         name: str,

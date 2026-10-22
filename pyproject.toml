@@ -22,6 +22,7 @@ dependencies = [
     "bibtexparser>=1.4.0",
     "pypdf>=4.0.0",
     "python-multipart>=0.0.9",
+    "psutil>=5.9.0",
 ]
 
 [project.scripts]

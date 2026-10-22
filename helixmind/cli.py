@@ -80,15 +80,25 @@ def get_system_status_panel(client: OllamaClient) -> Panel:
     modules_status.append(f"CRISPR: {'[green]ON[/green]' if settings.enable_crispr else '[dim]OFF[/dim]'}")
     modules_status.append(f"Tribunal: {'[green]ON[/green]' if settings.enable_tribunal else '[dim]OFF[/dim]'}")
 
+    from helixmind.core.resources import get_resource_manager
+    rm = get_resource_manager()
+    mem = rm.get_memory_info()
+    cpu = rm.get_cpu_info()
+    resource_line = (
+        f"[bold]Resource Guard:[/bold] {'[green]ACTIVE[/green]' if settings.enable_resource_guard else '[dim]OFF[/dim]'} | "
+        f"CPU: [cyan]{cpu['safe_threads']}/{cpu['total_cores']} threads[/cyan] ([dim]{cpu['reserved_cores']} reserved for SSH/OS[/dim]) | "
+        f"RAM: [cyan]{mem['used_gb']:.1f}GB/{mem['total_gb']:.1f}GB ({mem['percent_used']:.0f}%)[/cyan]"
+    )
+
     text = (
         f"[bold]Ollama Server:[/bold] {status_str} [dim]({client.base_url})[/dim]\n"
         f"[bold]Active Models:[/bold] Default: [cyan]{settings.ollama_default_model}[/cyan] | "
         f"Reasoning: [yellow]{settings.ollama_reasoning_model}[/yellow] | "
         f"Embedding: [blue]{settings.ollama_embedding_model}[/blue]\n"
+        f"{resource_line}\n"
         f"[bold]Defaults:[/bold] Depth: [magenta]{settings.default_depth.upper()}[/magenta] | "
-        f"Papers Limit: [cyan]{settings.default_literature_limit}[/cyan] | "
-        f"Trials Limit: [cyan]{settings.default_trials_limit}[/cyan] | "
-        f"Hypotheses/Cycle: [cyan]{settings.default_max_hypotheses}[/cyan]\n"
+        f"Papers Limit: [cyan]{settings.default_literature_limit}[/cyan] (Max safe: [dim]{settings.max_safe_papers_limit}[/dim]) | "
+        f"Trials Limit: [cyan]{settings.default_trials_limit}[/cyan] (Max safe: [dim]{settings.max_safe_trials_limit}[/dim])\n"
         f"[bold]Pipeline Modules:[/bold] {' | '.join(modules_status)}\n"
         f"[bold]Export Formats:[/bold] [dim]{settings.export_formats.upper()}[/dim]"
     )
@@ -668,11 +678,14 @@ def menu_configure_parameters() -> None:
         table.add_row("10", "Peer-Review Tribunal", "[green]ENABLED[/green]" if settings.enable_tribunal else "[red]DISABLED[/red]", "Adversarial 3-member expert evaluation and scoring board")
         table.add_row("11", "Export Formats", settings.export_formats.upper(), "Comma-separated export formats (Markdown, PDF, LaTeX, BibTeX)")
         table.add_row("12", "NCBI Email & API Key", f"{settings.ncbi_email} / {'Configured' if settings.ncbi_api_key else 'None'}", "E-utilities query credentials")
+        table.add_row("13", "Resource Guard (Anti-Freeze)", "[green]ENABLED[/green]" if settings.enable_resource_guard else "[red]DISABLED[/red]", "Host CPU thread reservation & anti-freeze memory throttling")
+        table.add_row("14", "Max Safe Papers Cap", str(settings.max_safe_papers_limit), "Maximum literature papers per cycle to prevent memory exhaustion")
+        table.add_row("15", "Max Safe Trials Cap", str(settings.max_safe_trials_limit), "Maximum clinical trials per cycle to protect API limits")
 
         console.print(table)
         console.print(
             "\n[bold]Options:[/bold]\n"
-            "  Enter a number [bold][1-12][/bold] to toggle or edit that parameter.\n"
+            "  Enter a number [bold][1-15][/bold] to toggle or edit that parameter.\n"
             "  [bold][S][/bold] Save all current settings to .env file permanently\n"
             "  [bold][0][/bold] Return to Main Menu\n"
         )
@@ -742,6 +755,21 @@ def menu_configure_parameters() -> None:
             update_settings({"NCBI_EMAIL": new_email, "NCBI_API_KEY": new_key}, persist=True)
             console.print("[bold green]✓ NCBI credentials saved successfully.[/bold green]")
 
+        elif choice == "13":
+            new_val = not settings.enable_resource_guard
+            update_settings({"ENABLE_RESOURCE_GUARD": str(new_val)}, persist=True)
+            console.print(f"[bold green]✓ Resource Guard is now {'ENABLED' if new_val else 'DISABLED'}[/bold green]")
+
+        elif choice == "14":
+            new_cap = IntPrompt.ask("Enter max safe papers cap per cycle", default=settings.max_safe_papers_limit)
+            update_settings({"MAX_SAFE_PAPERS_LIMIT": str(new_cap)}, persist=True)
+            console.print(f"[bold green]✓ Max safe papers limit updated to:[/bold green] [cyan]{new_cap}[/cyan]")
+
+        elif choice == "15":
+            new_cap = IntPrompt.ask("Enter max safe trials cap per cycle", default=settings.max_safe_trials_limit)
+            update_settings({"MAX_SAFE_TRIALS_LIMIT": str(new_cap)}, persist=True)
+            console.print(f"[bold green]✓ Max safe trials limit updated to:[/bold green] [cyan]{new_cap}[/cyan]")
+
         elif choice == "S":
             save_env_variables(
                 {
@@ -756,6 +784,9 @@ def menu_configure_parameters() -> None:
                     "ENABLE_CRISPR": str(settings.enable_crispr),
                     "ENABLE_TRIBUNAL": str(settings.enable_tribunal),
                     "EXPORT_FORMATS": settings.export_formats,
+                    "ENABLE_RESOURCE_GUARD": str(settings.enable_resource_guard),
+                    "MAX_SAFE_PAPERS_LIMIT": str(settings.max_safe_papers_limit),
+                    "MAX_SAFE_TRIALS_LIMIT": str(settings.max_safe_trials_limit),
                 }
             )
             console.print("[bold green]✓ All settings saved to .env file.[/bold green]")

@@ -22,6 +22,7 @@ from helixmind.agents.factory import AgentFactory, SearchStrategy
 from helixmind.api.events import EventType
 from helixmind.api.ws_manager import ws_manager
 from helixmind.config import Settings, get_settings
+from helixmind.core.resources import get_resource_manager
 from helixmind.graph import GraphExtractor, KnowledgeGraph
 from helixmind.hypotheses.models import (
     HypothesisCritique,
@@ -130,6 +131,15 @@ class AutoPilotOrchestrator:
         }
         num_cycles = depth_cycles.get(depth.lower(), 2)
 
+        # Initialize Host Resource Guard & Sanitize Operational Limits
+        resource_guard = get_resource_manager()
+        clamped_papers, clamped_trials, limit_warning = resource_guard.sanitize_request_limits(max_papers, max_trials)
+        if limit_warning:
+            console.print(Panel(limit_warning, border_style="yellow"))
+        max_papers = clamped_papers
+        max_trials = clamped_trials
+        console.print(resource_guard.get_status_panel())
+
         # Initialize Research Journal & Knowledge Graph
         journal = ResearchJournal(investigation_id=inv_id, topic=topic)
         knowledge_graph = KnowledgeGraph()
@@ -220,10 +230,29 @@ class AutoPilotOrchestrator:
             knowledge_graph.add_node(target, "protein")
             journal.add_glossary_term(target, "Primary biological target identified in strategy", "target", strategist.name)
 
+        await resource_guard.throttle_if_needed()
+        resource_guard.optimize_memory()
+
         # ---------------------------------------------------------------------
-        # 2. Ingest Literature & Trials across PubMed, Europe PMC, ClinicalTrials
+        # 2. Ingest Literature & Trials across PubMed, Europe PMC, ClinicalTrials (Dr. Librarian)
         # ---------------------------------------------------------------------
-        console.rule("[bold cyan]Multi-Source Literature & Clinical Trials Ingestion[/bold cyan]")
+        console.rule("[bold cyan]Multi-Source Evidence Ingestion & Curation (Dr. Librarian)[/bold cyan]")
+        librarian = self.factory.create_evidence_curator()
+        journal.record_agent_spawn(librarian.name, librarian.role, librarian.goal, librarian.model)
+        print_agent_spawn_card(
+            name=librarian.name,
+            role=librarian.role,
+            goal=librarian.goal,
+            model=librarian.model,
+            task_instruction=f"Query international registries (NCBI PubMed, Europe PMC, ClinicalTrials.gov) and screen publications for '{strategy.primary_condition}'",
+            color="cyan",
+        )
+        await emit(
+            EventType.AGENT_SPAWNED,
+            f"Spawning {librarian.name} to screen and curate biomedical evidence...",
+            {"name": librarian.name, "role": librarian.role, "goal": librarian.goal},
+        )
+
         notify("Ingesting literature from PubMed, preprints from Europe PMC, and ClinicalTrials.gov...")
         console.print("[dim]Submitting queries across international biomedical registries:[/dim]")
         console.print(f"  • NCBI PubMed: [cyan]'{strategy.pubmed_query}'[/cyan] (target limit: {max_papers} papers)")
@@ -295,7 +324,9 @@ class AutoPilotOrchestrator:
                 "trials": [{"id": t.nct_id, "title": t.title, "phase": t.phase} for t in clinical_trials[:5]],
             },
         )
-        journal.log("Ingestion Pipeline", "Evidence Retrieval", f"Retrieved {len(deduped_papers)} papers and {len(clinical_trials)} clinical trials")
+        journal.log(librarian.name, "Evidence Curation", f"Curated and validated {len(deduped_papers)} papers and {len(clinical_trials)} clinical trials")
+        await resource_guard.throttle_if_needed()
+        resource_guard.optimize_memory()
 
         # Live display of papers being read with abstracts
         if deduped_papers:
@@ -352,16 +383,17 @@ class AutoPilotOrchestrator:
                         journal.add_glossary_term(ent.name, f"Identified {ent.entity_type} from literature", ent.entity_type.lower(), "Europe PMC Annotations")
 
         # ---------------------------------------------------------------------
-        # 3. Dynamic Knowledge Graph Mining & Vector RAG Indexing
+        # 3. Dynamic Knowledge Graph Mining & Vector RAG Indexing (Dr. Graph)
         # ---------------------------------------------------------------------
         console.rule("[bold blue]Knowledge Graph Extraction & Vector RAG Indexing (Dr. Graph)[/bold blue]")
         notify("Spawning Dr. Graph to mine molecular interactions & build Knowledge Graph...")
-        journal.record_agent_spawn("Dr. Graph", "Systems Biology & Knowledge Graph Specialist", "Extract biological interactions", chosen_model)
+        graph_agent = self.factory.create_knowledge_graph_specialist()
+        journal.record_agent_spawn(graph_agent.name, graph_agent.role, graph_agent.goal, graph_agent.model)
         print_agent_spawn_card(
-            name="Dr. Graph",
-            role="Systems Biology & Knowledge Graph Specialist",
-            goal="Extract molecular relations and construct epistemic graph topology",
-            model=chosen_model,
+            name=graph_agent.name,
+            role=graph_agent.role,
+            goal=graph_agent.goal,
+            model=graph_agent.model,
             task_instruction="Extract directed causal relations (inhibits, targets, upregulated_in) from ingested publications",
             color="blue",
         )
@@ -384,7 +416,7 @@ class AutoPilotOrchestrator:
                 "mermaid": knowledge_graph.to_mermaid(max_edges=30),
             },
         )
-        journal.log("Dr. Graph", "Knowledge Graph Extraction", f"Discovered {relations_mined} biological interactions across literature")
+        journal.log(graph_agent.name, "Knowledge Graph Extraction", f"Discovered {relations_mined} biological interactions across literature")
 
         notify("Vectorizing and indexing documents into fast Semantic RAG index...")
         indexed_count = await self.index.index_documents_async(
@@ -392,7 +424,9 @@ class AutoPilotOrchestrator:
             studies=clinical_trials,
         )
         notify(f"Indexed {indexed_count} semantic chunks into in-memory vector space.")
-        journal.log("Vector Indexer", "RAG Indexing", f"Indexed {indexed_count} chunks with nomic-embed-text")
+        journal.log(graph_agent.name, "RAG Indexing", f"Indexed {indexed_count} chunks with nomic-embed-text")
+        await resource_guard.throttle_if_needed()
+        resource_guard.optimize_memory()
 
         # ---------------------------------------------------------------------
         # 4. Literature Analysis Agent (Dr. Synapse)
@@ -470,6 +504,9 @@ class AutoPilotOrchestrator:
                 ev.model_dump(mode="json"),
             )
 
+        await resource_guard.throttle_if_needed()
+        resource_guard.optimize_memory()
+
         # ---------------------------------------------------------------------
         # 5. Clinical Trial Evaluator Agent (Dr. Trials)
         # ---------------------------------------------------------------------
@@ -508,6 +545,8 @@ class AutoPilotOrchestrator:
             )
         )
         journal.log(trials_evaluator.name, "Clinical Analysis", "Evaluated active trials and intervention landscape")
+        await resource_guard.throttle_if_needed()
+        resource_guard.optimize_memory()
 
         # ---------------------------------------------------------------------
         # Dynamic Multi-Agent Exploration Loop (Coordinated by Research Director)
@@ -568,6 +607,8 @@ class AutoPilotOrchestrator:
                 )
             )
             analysis_context += f"\n\n[{mission.agent_name} Findings]:\n{mission_result[:300]}"
+            await resource_guard.throttle_if_needed()
+            resource_guard.optimize_memory()
 
         # ---------------------------------------------------------------------
         # 6. Progressive Part-by-Part Hypothesis Generation (Dr. Hypothesis)
@@ -858,12 +899,13 @@ class AutoPilotOrchestrator:
         if enable_depmap:
             console.rule("[bold blue]Functional Genomics & Cancer Dependency Map (Dr. DepMap)[/bold blue]")
             notify("Spawning Dr. DepMap to verify target essentiality across human cancer cell lines...")
-            journal.record_agent_spawn("Dr. DepMap", "Functional Genomics & Cancer Dependency Specialist", "Verify Chronos dependency scores", chosen_model)
+            depmap_agent = self.factory.create_depmap_specialist()
+            journal.record_agent_spawn(depmap_agent.name, depmap_agent.role, depmap_agent.goal, depmap_agent.model)
             print_agent_spawn_card(
-                name="Dr. DepMap",
-                role="Functional Genomics & Cancer Dependency Specialist",
-                goal="Audit functional essentiality and Chronos scores across human cancer cell lines",
-                model=chosen_model,
+                name=depmap_agent.name,
+                role=depmap_agent.role,
+                goal=depmap_agent.goal,
+                model=depmap_agent.model,
                 task_instruction=f"Query Broad Institute DepMap Chronos matrix for: {', '.join(targets_to_check)}",
                 color="blue",
             )
@@ -888,12 +930,14 @@ class AutoPilotOrchestrator:
                     dep_res.therapeutic_actionability,
                 )
                 journal.log(
-                    "Dr. DepMap",
+                    depmap_agent.name,
                     "Cancer Dependency Map",
                     f"Gene: {dep_res.gene_symbol} | Chronos Score: {dep_res.chronos_score} ({dep_res.essentiality_tier})",
                     evidence_id=f"DepMap:{dep_res.gene_symbol}",
                 )
             console.print(depmap_table)
+            await resource_guard.throttle_if_needed()
+            resource_guard.optimize_memory()
 
         # ---------------------------------------------------------------------
         # 8c. Real-World FDA Pharmacovigilance Surveillance (openFDA FAERS)
@@ -912,12 +956,13 @@ class AutoPilotOrchestrator:
         if enable_pharmacovigilance:
             console.rule("[bold blue]Real-World Human Clinical Pharmacovigilance (openFDA FAERS)[/bold blue]")
             notify("Spawning Dr. Pharmacovigilance to monitor real human adverse reactions via openFDA FAERS...")
-            journal.record_agent_spawn("Dr. Pharmacovigilance", "Clinical Safety & Surveillance Specialist", "Monitor post-marketing human adverse reactions", chosen_model)
+            pv_agent = self.factory.create_pharmacovigilance_specialist()
+            journal.record_agent_spawn(pv_agent.name, pv_agent.role, pv_agent.goal, pv_agent.model)
             print_agent_spawn_card(
-                name="Dr. Pharmacovigilance",
-                role="Clinical Safety & Post-Marketing Surveillance Specialist",
-                goal="Monitor human adverse event reports and safety signals via openFDA FAERS API",
-                model=chosen_model,
+                name=pv_agent.name,
+                role=pv_agent.role,
+                goal=pv_agent.goal,
+                model=pv_agent.model,
                 task_instruction=f"Query FAERS registry for post-marketing toxicities associated with: '{candidate_parent}'",
                 color="blue",
             )
@@ -943,11 +988,13 @@ class AutoPilotOrchestrator:
                 console.print(fda_table)
 
             journal.log(
-                "Dr. Pharmacovigilance",
+                pv_agent.name,
                 "FDA Safety Surveillance",
                 f"Analyzed {fda_report.total_patient_reports:,} FAERS human reports for {candidate_parent}. Verdict: {fda_report.clinical_safety_verdict[:90]}",
                 evidence_id="FDA:FAERS",
             )
+            await resource_guard.throttle_if_needed()
+            resource_guard.optimize_memory()
         else:
             fda_report = FDASafetyReport(
                 drug_name=candidate_parent,
@@ -961,12 +1008,13 @@ class AutoPilotOrchestrator:
         if enable_clinvar:
             console.rule("[bold blue]Real Clinical Genomic Stratification (NCBI ClinVar)[/bold blue]")
             notify("Spawning Dr. ClinVar to identify pathogenic variants and precision inclusion criteria...")
-            journal.record_agent_spawn("Dr. ClinVar", "Clinical Genomics & Molecular Pathologist", "Stratify precision oncology patient cohorts", chosen_model)
+            clinvar_agent = self.factory.create_clinvar_specialist()
+            journal.record_agent_spawn(clinvar_agent.name, clinvar_agent.role, clinvar_agent.goal, clinvar_agent.model)
             print_agent_spawn_card(
-                name="Dr. ClinVar",
-                role="Clinical Genomics & Molecular Pathologist",
-                goal="Identify verified pathogenic alterations and formulate precision recruitment criteria",
-                model=chosen_model,
+                name=clinvar_agent.name,
+                role=clinvar_agent.role,
+                goal=clinvar_agent.goal,
+                model=clinvar_agent.model,
                 task_instruction=f"Query NCBI ClinVar for verified pathogenic alterations in {targets_to_check[0]}",
                 color="blue",
             )
@@ -994,11 +1042,13 @@ class AutoPilotOrchestrator:
                 console.print(cv_table)
 
             journal.log(
-                "Dr. ClinVar",
+                clinvar_agent.name,
                 "Genomic Stratification",
                 f"Analyzed {clinvar_report.total_pathogenic_variants_in_db} pathogenic variants in {clinvar_report.target_gene}. Biomarker criteria: {clinvar_report.responder_biomarker_signature[:100]}",
                 evidence_id=f"ClinVar:{clinvar_report.target_gene}",
             )
+            await resource_guard.throttle_if_needed()
+            resource_guard.optimize_memory()
         else:
             clinvar_report = GenomicStratificationReport(
                 target_gene=targets_to_check[0] if targets_to_check else "TARGET",
@@ -1015,12 +1065,13 @@ class AutoPilotOrchestrator:
         if enable_tme:
             console.rule("[bold blue]Tumor Microenvironment & Cell-Cell Communication (Single-Cell TME)[/bold blue]")
             notify("Spawning Dr. TME to map single-cell cell types and paracrine ligand-receptor communications...")
-            journal.record_agent_spawn("Dr. TME", "Single-Cell Transcriptomics & Microenvironment Specialist", "Resolve cell-cell paracrine signaling", chosen_model)
+            tme_agent = self.factory.create_tme_specialist()
+            journal.record_agent_spawn(tme_agent.name, tme_agent.role, tme_agent.goal, tme_agent.model)
             print_agent_spawn_card(
-                name="Dr. TME",
-                role="Single-Cell Transcriptomics & Microenvironment Specialist",
-                goal="Deconvolute tumor microenvironment and map active paracrine signaling axes",
-                model=chosen_model,
+                name=tme_agent.name,
+                role=tme_agent.role,
+                goal=tme_agent.goal,
+                model=tme_agent.model,
                 task_instruction=f"Map cellular interactome and stromal immunosuppression index for: {', '.join(targets_to_check)}",
                 color="magenta",
             )
@@ -1046,10 +1097,12 @@ class AutoPilotOrchestrator:
                 console.print(tme_table)
 
             journal.log(
-                "Dr. TME",
+                tme_agent.name,
                 "Single-Cell Microenvironment",
                 f"Subtype: {tme_report.microenvironment_subtype} | Active paracrine axes: {len(tme_report.active_ligand_receptor_axes)}",
             )
+            await resource_guard.throttle_if_needed()
+            resource_guard.optimize_memory()
         else:
             tme_report = TMEMicroenvironmentReport(
                 target_disease=strategy.primary_condition,
@@ -1067,11 +1120,13 @@ class AutoPilotOrchestrator:
 
         if enable_crispr:
             crispr_designer = CRISPRDesigner()
+            crispr_agent = self.factory.create_crispr_specialist()
+            journal.record_agent_spawn(crispr_agent.name, crispr_agent.role, crispr_agent.goal, crispr_agent.model)
             print_agent_spawn_card(
-                name="Dr. CRISPR",
-                role="Genome Editing & Primer Design Bioinformatician",
-                goal="Design optimal sgRNA guides and PCR validation primers for laboratory knockout",
-                model=chosen_model,
+                name=crispr_agent.name,
+                role=crispr_agent.role,
+                goal=crispr_agent.goal,
+                model=crispr_agent.model,
                 task_instruction=f"Design Cas9 sgRNA guides and golden gate cloning oligos for: {targets_to_check[0]}",
                 color="green",
             )
@@ -1105,6 +1160,8 @@ class AutoPilotOrchestrator:
                     f"[bold]Genomic Amplicon Length:[/bold] {vp.amplicon_length_bp} bp"
                 )
                 console.print(Panel(p_text, title="Laboratory Validation PCR Primers", border_style="blue"))
+            await resource_guard.throttle_if_needed()
+            resource_guard.optimize_memory()
         else:
             crispr_report = CRISPRDesignReport(
                 target_gene=targets_to_check[0] if targets_to_check else "TARGET",
@@ -1159,6 +1216,8 @@ class AutoPilotOrchestrator:
                 f"[bold]Board Recommendation:[/bold] [bold cyan]{verdict_val}[/bold cyan]"
             )
             console.print(Panel(trib_panel, title="⚖️ Adversarial Peer Tribunal Consensus", border_style="green"))
+            await resource_guard.throttle_if_needed()
+            resource_guard.optimize_memory()
         else:
             tribunal_consensus = TribunalConsensus(
                 consensus_verdict="NOT_CONVENED",
@@ -1172,12 +1231,13 @@ class AutoPilotOrchestrator:
         # ---------------------------------------------------------------------
         console.rule("[bold green]Landmark Scientific Paper Authoring (Dr. Editor)[/bold green]")
         notify("Spawning Dr. Editor to author publication-grade Scientific Paper in Markdown...")
-        journal.record_agent_spawn("Dr. Editor", "Editor-in-Chief & Lead Author", "Synthesize formal scientific publication in Markdown", chosen_model)
+        editor_agent = self.factory.create_paper_editor()
+        journal.record_agent_spawn(editor_agent.name, editor_agent.role, editor_agent.goal, editor_agent.model)
         print_agent_spawn_card(
-            name="Dr. Editor",
-            role="Editor-in-Chief & Lead Scientific Author",
-            goal="Synthesize formal academic publication in Markdown with empirical data and citations",
-            model=chosen_model,
+            name=editor_agent.name,
+            role=editor_agent.role,
+            goal=editor_agent.goal,
+            model=editor_agent.model,
             task_instruction=f"Compile all multi-agent findings, graphs, in-silico tables, and references into a formal manuscript for '{topic}'",
             color="green",
         )
@@ -1203,7 +1263,9 @@ class AutoPilotOrchestrator:
             crispr_design=crispr_report,
             tribunal_consensus=tribunal_consensus,
         )
-        journal.log("Dr. Editor", "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
+        journal.log(editor_agent.name, "Publication Authoring", f"Authored scientific paper saved to {paper_path.name}")
+        await resource_guard.throttle_if_needed()
+        resource_guard.optimize_memory()
 
         # Multi-format manuscript exports (PDF, LaTeX, BibTeX)
         if export_formats:

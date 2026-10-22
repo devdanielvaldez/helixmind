@@ -75,6 +75,21 @@ class OllamaClient:
     def _async_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(base_url=self.base_url, timeout=httpx.Timeout(self.timeout, connect=30.0))
 
+    def _build_options(
+        self,
+        options: Optional[Dict[str, Any]] = None,
+        temperature: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Merge safe hardware options (CPU threads, context window cap) with caller options."""
+        from helixmind.core.resources import get_resource_manager
+        rm = get_resource_manager()
+        base = rm.get_safe_ollama_options()
+        if temperature is not None:
+            base["temperature"] = temperature
+        if options:
+            base.update(options)
+        return base
+
     # -------------------------------------------------------------------------
     # Health and Model Management
     # -------------------------------------------------------------------------
@@ -151,7 +166,7 @@ class OllamaClient:
             "model": chosen_model,
             "messages": messages,
             "stream": False,
-            "options": {"temperature": temperature, **(options or {})},
+            "options": self._build_options(options, temperature=temperature),
         }
         if format:
             payload["format"] = format
@@ -236,7 +251,7 @@ class OllamaClient:
             "model": chosen_model,
             "messages": messages,
             "stream": False,
-            "options": {"temperature": temperature, **(options or {})},
+            "options": self._build_options(options, temperature=temperature),
         }
         if format:
             payload["format"] = format
@@ -320,7 +335,7 @@ class OllamaClient:
             "model": chosen_model,
             "messages": messages,
             "stream": True,
-            "options": {"temperature": temperature, **(options or {})},
+            "options": self._build_options(options, temperature=temperature),
         }
 
         with self._sync_client() as client:
@@ -348,7 +363,7 @@ class OllamaClient:
             "model": chosen_model,
             "messages": messages,
             "stream": True,
-            "options": {"temperature": temperature, **(options or {})},
+            "options": self._build_options(options, temperature=temperature),
         }
 
         async with self._async_client() as client:
@@ -584,7 +599,11 @@ class OllamaClient:
         input_texts = [texts] if isinstance(texts, str) else texts
 
         # Try /api/embed (standard in newer Ollama versions)
-        payload = {"model": chosen_model, "input": input_texts}
+        payload = {
+            "model": chosen_model,
+            "input": input_texts,
+            "options": self._build_options(),
+        }
         with self._sync_client() as client:
             res = client.post("/api/embed", json=payload)
             if res.status_code == 200:
@@ -594,7 +613,10 @@ class OllamaClient:
             # Fallback to older /api/embeddings endpoint per text
             embeddings: List[List[float]] = []
             for text in input_texts:
-                fb_res = client.post("/api/embeddings", json={"model": chosen_model, "prompt": text})
+                fb_res = client.post(
+                    "/api/embeddings",
+                    json={"model": chosen_model, "prompt": text, "options": self._build_options()},
+                )
                 fb_res.raise_for_status()
                 embeddings.append(fb_res.json().get("embedding", []))
             return embeddings
@@ -608,7 +630,11 @@ class OllamaClient:
         chosen_model = model or self.embedding_model
         input_texts = [texts] if isinstance(texts, str) else texts
 
-        payload = {"model": chosen_model, "input": input_texts}
+        payload = {
+            "model": chosen_model,
+            "input": input_texts,
+            "options": self._build_options(),
+        }
         async with self._async_client() as client:
             res = await client.post("/api/embed", json=payload)
             if res.status_code == 200:
@@ -618,7 +644,10 @@ class OllamaClient:
             # Fallback
             embeddings: List[List[float]] = []
             for text in input_texts:
-                fb_res = await client.post("/api/embeddings", json={"model": chosen_model, "prompt": text})
+                fb_res = await client.post(
+                    "/api/embeddings",
+                    json={"model": chosen_model, "prompt": text, "options": self._build_options()},
+                )
                 fb_res.raise_for_status()
                 embeddings.append(fb_res.json().get("embedding", []))
             return embeddings

@@ -119,7 +119,10 @@ class SemanticIndex:
         if not all_new_chunks:
             return 0
 
-        # Generate embeddings in batches via Ollama
+        # Generate embeddings in batches via Ollama with resource protection
+        from helixmind.core.resources import get_resource_manager
+        rm = get_resource_manager()
+
         texts = [c.content for c in all_new_chunks]
         all_embeddings: List[List[float]] = []
 
@@ -127,6 +130,7 @@ class SemanticIndex:
             batch = texts[i : i + batch_size]
             emb_batch = await self.ollama.embed_async(batch)
             all_embeddings.extend(emb_batch)
+            await rm.throttle_if_needed()
 
         for chunk, emb in zip(all_new_chunks, all_embeddings):
             chunk.embedding = emb

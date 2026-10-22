@@ -3,7 +3,7 @@
 from functools import lru_cache
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -79,6 +79,36 @@ class Settings(BaseSettings):
     export_formats: str = Field(
         default="markdown,pdf,latex,bibtex",
         description="Comma-separated default export formats (markdown, pdf, latex, bibtex)",
+    )
+
+    # Host Resource Guard & Anti-Freeze Throttling
+    enable_resource_guard: bool = Field(
+        default=True,
+        description="Enable host resource monitor, CPU throttling, and memory protection",
+    )
+    max_cpu_threads: Optional[int] = Field(
+        default=None,
+        description="Max CPU threads allocated to Ollama (default: cpu_count - 2, preserving SSH/OS)",
+    )
+    max_context_tokens: int = Field(
+        default=4096,
+        description="Safe max context window (num_ctx) for Ollama inference",
+    )
+    ram_warning_threshold_pct: float = Field(
+        default=85.0,
+        description="RAM usage percentage threshold to trigger proactive garbage collection and pacing",
+    )
+    max_safe_papers_limit: int = Field(
+        default=100,
+        description="Maximum papers allowed per investigation cycle to prevent host memory exhaustion",
+    )
+    max_safe_trials_limit: int = Field(
+        default=50,
+        description="Maximum clinical trials allowed per investigation cycle",
+    )
+    throttle_pause_seconds: float = Field(
+        default=0.15,
+        description="Pause in seconds between heavy multi-agent cycles to ensure OS / SSH responsiveness",
     )
 
     # Biomedical APIs Configuration

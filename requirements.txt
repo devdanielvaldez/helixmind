@@ -25,6 +25,7 @@ bibtexparser>=1.4.0
 
 # Terminal UI & formatting
 rich>=13.7.0
+psutil>=5.9.0
 
 # Testing
 pytest>=7.4.0
