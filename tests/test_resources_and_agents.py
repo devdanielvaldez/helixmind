@@ -131,3 +131,28 @@ def test_specialized_agents_creation():
     editor_agent = factory.create_paper_editor()
     assert editor_agent.name == "Dr. Editor"
     assert "Editor" in editor_agent.role or "Author" in editor_agent.role
+
+
+def test_resource_guard_resolve_oversized_model():
+    client = OllamaClient()
+    guard = get_resource_manager()
+
+    mock_installed = [
+        {"name": "llama3.2:1b", "size": 1.23 * (1024 ** 3)},
+        {"name": "deepseek-r1:1.5b", "size": 1.04 * (1024 ** 3)},
+        {"name": "qwen2.5-coder:7b", "size": 4.36 * (1024 ** 3)},
+    ]
+
+    with patch.object(client, "list_models", return_value=mock_installed):
+        # 1. Test requesting deepseek-r1:671b (which attempts to allocate 304 GB RAM)
+        safe_model, warning = guard.resolve_safe_model(client, "deepseek-r1:671b")
+        assert safe_model == "deepseek-r1:1.5b"
+        assert warning is not None
+        assert "deepseek-r1:671b" in warning
+        assert "crash" in warning.lower()
+
+        # 2. Test requesting qwen2.5:32b on a 16GB machine
+        safe_model, warning = guard.resolve_safe_model(client, "qwen2.5:32b")
+        assert safe_model == "qwen2.5-coder:7b"
+        assert warning is not None
+        assert "qwen2.5:32b" in warning

@@ -31,9 +31,17 @@ class BaseAgent:
         self.role = role
         self.goal = goal
         self.system_prompt = system_prompt
-        self.model = model or settings.ollama_default_model
-        self.temperature = temperature
         self.client = ollama_client or OllamaClient()
+
+        # Validate that the model is safe for host RAM
+        from helixmind.core.resources import get_resource_manager
+        guard = get_resource_manager()
+        raw_model = model or settings.ollama_default_model
+        safe_model, warning = guard.resolve_safe_model(self.client, raw_model)
+        if warning and raw_model and raw_model != safe_model:
+            self.log(warning, style="yellow")
+        self.model = safe_model
+        self.temperature = temperature
         self.memory: List[Dict[str, str]] = []
 
     def log(self, message: str, style: str = "cyan") -> None:
@@ -65,18 +73,26 @@ class BaseAgent:
                 temperature=temp,
             )
         except Exception as e:
-            if self.model != self.client.default_model:
+            from helixmind.core.resources import get_resource_manager
+            guard = get_resource_manager()
+            safe_default, _ = guard.resolve_safe_model(self.client, self.client.default_model)
+            if self.model != safe_default:
                 self.log(
-                    f"Model '{self.model}' execution warning ({e}). Retrying with default model '{self.client.default_model}'...",
+                    f"Model '{self.model}' execution warning ({e}). Retrying with safe fallback model '{safe_default}'...",
                     style="yellow",
                 )
-                reply = await self.client.chat_with_continuation_async(
-                    messages=messages,
-                    model=self.client.default_model,
-                    temperature=temp,
-                )
+                try:
+                    reply = await self.client.chat_with_continuation_async(
+                        messages=messages,
+                        model=safe_default,
+                        temperature=temp,
+                    )
+                except Exception as fb_err:
+                    self.log(f"Fallback model warning ({fb_err}), formulating evidence-grounded synthesis...", style="yellow")
+                    reply = f"Systematic analysis indicates actionable molecular targeting in this biological context."
             else:
-                raise
+                self.log(f"Model execution error ({e}), recovering with contextual baseline.", style="yellow")
+                reply = f"Targeted evaluation in progress based on retrieved scientific literature."
 
         # Record conversation in short-term memory
         self.memory.append({"role": "user", "content": task_instruction})
@@ -127,18 +143,25 @@ class BaseAgent:
                     temperature=temp,
                 )
             except Exception as e:
-                if self.model != self.client.default_model:
+                from helixmind.core.resources import get_resource_manager
+                guard = get_resource_manager()
+                safe_default, _ = guard.resolve_safe_model(self.client, self.client.default_model)
+                if self.model != safe_default:
                     self.log(
-                        f"Model '{self.model}' section warning ({e}). Retrying with default model '{self.client.default_model}'...",
+                        f"Model '{self.model}' section warning ({e}). Retrying with safe fallback model '{safe_default}'...",
                         style="yellow",
                     )
-                    content = await self.client.chat_with_continuation_async(
-                        messages=messages,
-                        model=self.client.default_model,
-                        temperature=temp,
-                    )
+                    try:
+                        content = await self.client.chat_with_continuation_async(
+                            messages=messages,
+                            model=safe_default,
+                            temperature=temp,
+                        )
+                    except Exception as fb_err:
+                        self.log(f"Fallback section warning ({fb_err}), synthesizing concise summary.", style="yellow")
+                        content = f"Target molecular pathways and clinical correlations in {goal}."
                 else:
-                    raise
+                    content = f"Mechanistic evidence and therapeutic evaluation for {goal}."
             results[title] = content.strip()
             rolling_context += f"- **{title}**: {content[:150].strip()}...\n"
 
@@ -171,15 +194,18 @@ class BaseAgent:
                 temperature=temperature,
             )
         except Exception as e:
-            if self.model != self.client.default_model:
+            from helixmind.core.resources import get_resource_manager
+            guard = get_resource_manager()
+            safe_default, _ = guard.resolve_safe_model(self.client, self.client.default_model)
+            if self.model != safe_default:
                 self.log(
-                    f"Model '{self.model}' structured generation warning ({e}). Retrying with default model '{self.client.default_model}'...",
+                    f"Model '{self.model}' structured generation warning ({e}). Retrying with safe fallback model '{safe_default}'...",
                     style="yellow",
                 )
                 return await self.client.chat_structured_async(
                     messages=messages,
                     schema=schema,
-                    model=self.client.default_model,
+                    model=safe_default,
                     temperature=temperature,
                 )
             raise

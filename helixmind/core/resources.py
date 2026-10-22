@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import os
+import re
 import sys
 import time
 from typing import Any, Dict, Optional, Tuple
@@ -154,6 +155,98 @@ class SystemResourceGuard:
             )
 
         return clamped_papers, clamped_trials, warning_msg
+
+    def resolve_safe_model(
+        self,
+        client: Any,
+        requested_model: Optional[str] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Validate that requested model is installed and safe for host RAM.
+        
+        If model is missing, not installed, or dangerously large (> available host RAM),
+        selects the best installed candidate that fits safely in memory to prevent OOM crash.
+        """
+        model = (requested_model or self.settings.ollama_default_model).strip()
+        
+        try:
+            installed = client.list_models()
+        except Exception:
+            return model, None
+
+        if not installed:
+            return model, None
+
+        installed_names = [m.get("name", "") for m in installed]
+
+        mem = self.get_memory_info()
+        available_gb = mem.get("available_gb", 8.0)
+        total_gb = mem.get("total_gb", 16.0)
+
+        # Check for dangerous oversized parameter tags (e.g. 671b, 70b, 120b, 405b, 32b)
+        is_oversized = False
+        param_match = re.search(r"(\d+(?:\.\d+)?)[bB]", model)
+        if param_match:
+            try:
+                param_num = float(param_match.group(1))
+                # If parameter size in billions exceeds available RAM or total RAM / 1.5,
+                # it will trigger OOM allocation failure
+                if param_num >= (total_gb * 0.9):
+                    is_oversized = True
+            except Exception:
+                pass
+
+        exact_match = None
+        for m in installed:
+            name = m.get("name", "")
+            if name == model or name.split(":")[0] == model or model.split(":")[0] == name.split(":")[0]:
+                exact_match = m
+                break
+
+        if exact_match and not is_oversized:
+            disk_size_gb = exact_match.get("size", 0) / (1024 ** 3)
+            if disk_size_gb > 0 and disk_size_gb >= (total_gb * 0.9):
+                is_oversized = True
+            else:
+                return exact_match.get("name", model), None
+
+        # Pick safest installed model
+        fallback_model = None
+        # Preference: if requested had deepseek/r1, look for deepseek-r1:1.5b
+        if "deepseek" in model.lower():
+            for name in installed_names:
+                if "deepseek" in name.lower() and ("1.5b" in name.lower() or "1b" in name.lower()):
+                    fallback_model = name
+                    break
+        elif "qwen" in model.lower():
+            for name in installed_names:
+                if "qwen" in name.lower() and ("coder" in name.lower() or "2b" in name.lower() or "7b" in name.lower()):
+                    fallback_model = name
+                    break
+
+        if not fallback_model:
+            for m in installed:
+                name = m.get("name", "")
+                if "embed" in name.lower():
+                    continue
+                size_gb = m.get("size", 0) / (1024 ** 3)
+                if size_gb <= (available_gb * 0.8) or size_gb <= 4.5:
+                    fallback_model = name
+                    break
+
+        if not fallback_model:
+            fallback_model = installed_names[0] if installed_names else "llama3.2:1b"
+
+        reason = (
+            f"Model '{model}' requires massive RAM allocation ({param_match.group(0) if param_match else 'oversized'}) "
+            f"exceeding host memory ({total_gb:.0f} GB)"
+            if is_oversized
+            else f"Model '{model}' is not installed in local Ollama"
+        )
+        warning = (
+            f"🛡️ [bold yellow]Resource Guard Model Override:[/bold yellow] {reason}. "
+            f"Automatically routed to verified safe installed model [bold green]'{fallback_model}'[/bold green] to prevent machine crash."
+        )
+        return fallback_model, warning
 
     def optimize_memory(self) -> int:
         """Trigger proactive garbage collection and memory reclamation."""
