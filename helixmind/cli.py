@@ -42,7 +42,7 @@ from helixmind.llm.ollama_client import OllamaClient, OllamaConnectionError
 
 console = Console()
 
-BANNER_ART = """
+BANNER_ART = r"""
   _    _      _ _      __  __ _           _ 
  | |  | |    | (_)    |  \/  (_)         | |
  | |__| | ___| |___  _| \  / |_ _ __   __| |
@@ -231,6 +231,13 @@ def cmd_investigate(
     export_formats: List[str] | None = None,
 ) -> ResearchReport:
     """Launch an autonomous multi-agent scientific investigation."""
+    import signal
+    if hasattr(signal, "SIGHUP"):
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        except Exception:
+            pass
+
     settings = get_settings()
     actual_papers = max_papers if max_papers is not None else settings.default_literature_limit
     actual_trials = max_trials if max_trials is not None else settings.default_trials_limit
@@ -845,7 +852,18 @@ def menu_run_investigation(client: OllamaClient) -> None:
         depth = Prompt.ask("Select Depth", choices=["deep", "exhaustive", "institutional"], default=settings.default_depth)
         papers = IntPrompt.ask("Papers count", default=settings.default_literature_limit)
         trials = IntPrompt.ask("Trials count", default=settings.default_trials_limit)
-        model = Prompt.ask("Model Override (or blank for default)", default=settings.ollama_default_model)
+
+        installed_models = fetch_installed_models(client)
+        if installed_models:
+            avail_names = [m["name"] for m in installed_models if "embed" not in m["name"].lower()]
+            console.print(f"[dim]Verified installed models in Ollama: {', '.join(avail_names)}[/dim]")
+
+        model_input = Prompt.ask("Model Override (or blank for default)", default=settings.ollama_default_model).strip()
+        from helixmind.core.resources import get_resource_manager
+        guard = get_resource_manager()
+        model, warning = guard.resolve_safe_model(client, model_input)
+        if warning:
+            console.print(Panel(warning, border_style="yellow"))
 
     cmd_investigate(
         topic=topic,

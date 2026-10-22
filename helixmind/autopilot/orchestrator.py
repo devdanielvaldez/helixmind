@@ -114,10 +114,22 @@ class AutoPilotOrchestrator:
         export_formats: Optional[List[str]] = None,
     ) -> ResearchReport:
         """Run an autonomous end-to-end investigation on a target condition or topic."""
-        if model:
-            self.factory = AgentFactory(ollama_client=self.ollama, model=model)
+        # Initialize Host Resource Guard & Sanitize Operational Limits and Model
+        resource_guard = get_resource_manager()
+        raw_model = model or self.settings.ollama_default_model
+        safe_model, model_warning = resource_guard.resolve_safe_model(self.ollama, raw_model)
+        if model_warning:
+            console.print(Panel(model_warning, border_style="yellow"))
+        chosen_model = safe_model
+        self.factory = AgentFactory(ollama_client=self.ollama, model=chosen_model)
 
-        chosen_model = model or self.settings.ollama_default_model
+        clamped_papers, clamped_trials, limit_warning = resource_guard.sanitize_request_limits(max_papers, max_trials)
+        if limit_warning:
+            console.print(Panel(limit_warning, border_style="yellow"))
+        max_papers = clamped_papers
+        max_trials = clamped_trials
+        console.print(resource_guard.get_status_panel())
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         inv_id = f"INV-{int(datetime.now().timestamp())}"
@@ -130,15 +142,6 @@ class AutoPilotOrchestrator:
             "quick": 1,
         }
         num_cycles = depth_cycles.get(depth.lower(), 2)
-
-        # Initialize Host Resource Guard & Sanitize Operational Limits
-        resource_guard = get_resource_manager()
-        clamped_papers, clamped_trials, limit_warning = resource_guard.sanitize_request_limits(max_papers, max_trials)
-        if limit_warning:
-            console.print(Panel(limit_warning, border_style="yellow"))
-        max_papers = clamped_papers
-        max_trials = clamped_trials
-        console.print(resource_guard.get_status_panel())
 
         # Initialize Research Journal & Knowledge Graph
         journal = ResearchJournal(investigation_id=inv_id, topic=topic)
@@ -325,6 +328,14 @@ class AutoPilotOrchestrator:
             },
         )
         journal.log(librarian.name, "Evidence Curation", f"Curated and validated {len(deduped_papers)} papers and {len(clinical_trials)} clinical trials")
+
+        # Save checkpoint to disk
+        reports_dir = self.settings.data_dir / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_file = reports_dir / f"checkpoint_{slug}_{timestamp_str}.json"
+        journal.export_json(checkpoint_file)
+        console.print(f"[bold cyan]💾 [Storage & Checkpoint][/bold cyan] Literature checkpoint persisted to disk: [green]{checkpoint_file.name}[/green]")
+
         await resource_guard.throttle_if_needed()
         resource_guard.optimize_memory()
 
@@ -1335,11 +1346,15 @@ class AutoPilotOrchestrator:
         journal_file = reports_dir / f"journal_{slug}_{timestamp_str}.json"
         graph_file = reports_dir / f"graph_{slug}_{timestamp_str}.json"
 
+        console.print(f"\n[bold cyan]💾 [Storage & Graph DB][/bold cyan] Persisting {len(knowledge_graph.nodes)} nodes and {len(knowledge_graph.edges)} directed edges to disk: [green]{graph_file.name}[/green]")
+        knowledge_graph.export_json(graph_file)
+
+        console.print(f"[bold cyan]💾 [Research Journal DB][/bold cyan] Persisting {len(journal.entries)} scientific audit logs to disk: [green]{journal_file.name}[/green]")
+        journal.export_json(journal_file)
+
+        console.print(f"[bold cyan]💾 [Research Report DB][/bold cyan] Serializing comprehensive multi-agent report to disk: [green]{report_file.name}[/green]")
         with open(report_file, "w", encoding="utf-8") as f:
             f.write(report.model_dump_json(indent=2))
-
-        journal.export_json(journal_file)
-        knowledge_graph.export_json(graph_file)
 
         console.rule("[bold green]Scientific Investigation Artifacts Saved[/bold green]")
         artifacts_card = (

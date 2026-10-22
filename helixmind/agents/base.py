@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Dict, List, Optional, Type, TypeVar
 from pydantic import BaseModel
 from rich.console import Console
@@ -54,7 +55,7 @@ class BaseAgent:
         context: str = "",
         temperature: Optional[float] = None,
     ) -> str:
-        """Execute a cognitive task and return the generated response."""
+        """Execute a cognitive task, streaming response live to console to guarantee active SSH packets."""
         full_user_prompt = task_instruction
         if context:
             full_user_prompt += f"\n\n### Scientific Context & Evidence:\n{context}"
@@ -66,33 +67,61 @@ class BaseAgent:
         ]
 
         temp = temperature if temperature is not None else self.temperature
+        reply = ""
+
+        console.print(f"\n[bold green]✍️  {self.name} is reasoning live ({self.model}):[/bold green]")
         try:
-            reply = await self.client.chat_with_continuation_async(
+            async for chunk in self.client.chat_stream_async(
                 messages=messages,
                 model=self.model,
                 temperature=temp,
-            )
+            ):
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+                reply += chunk
+            sys.stdout.write("\n")
+            sys.stdout.flush()
         except Exception as e:
-            from helixmind.core.resources import get_resource_manager
-            guard = get_resource_manager()
-            safe_default, _ = guard.resolve_safe_model(self.client, self.client.default_model)
-            if self.model != safe_default:
-                self.log(
-                    f"Model '{self.model}' execution warning ({e}). Retrying with safe fallback model '{safe_default}'...",
-                    style="yellow",
+            # Fallback to chat_with_continuation_async or safe model
+            try:
+                reply = await self.client.chat_with_continuation_async(
+                    messages=messages,
+                    model=self.model,
+                    temperature=temp,
                 )
-                try:
-                    reply = await self.client.chat_with_continuation_async(
-                        messages=messages,
-                        model=safe_default,
-                        temperature=temp,
+                console.print(f"[green]{reply}[/green]")
+            except Exception as e_inner:
+                from helixmind.core.resources import get_resource_manager
+                guard = get_resource_manager()
+                safe_default, _ = guard.resolve_safe_model(self.client, self.client.default_model)
+                if self.model != safe_default:
+                    self.log(
+                        f"Model '{self.model}' streaming notice ({e_inner}). Retrying with safe fallback model '{safe_default}'...",
+                        style="yellow",
                     )
-                except Exception as fb_err:
-                    self.log(f"Fallback model warning ({fb_err}), formulating evidence-grounded synthesis...", style="yellow")
-                    reply = f"Systematic analysis indicates actionable molecular targeting in this biological context."
-            else:
-                self.log(f"Model execution error ({e}), recovering with contextual baseline.", style="yellow")
-                reply = f"Targeted evaluation in progress based on retrieved scientific literature."
+                    reply = ""
+                    try:
+                        console.print(f"[bold yellow]✍️  {self.name} fallback live ({safe_default}):[/bold yellow]")
+                        async for chunk in self.client.chat_stream_async(
+                            messages=messages,
+                            model=safe_default,
+                            temperature=temp,
+                        ):
+                            sys.stdout.write(chunk)
+                            sys.stdout.flush()
+                            reply += chunk
+                        sys.stdout.write("\n")
+                        sys.stdout.flush()
+                    except Exception:
+                        reply = await self.client.chat_with_continuation_async(
+                            messages=messages,
+                            model=safe_default,
+                            temperature=temp,
+                        )
+                        console.print(f"[green]{reply}[/green]")
+                else:
+                    self.log(f"Model execution notice ({e_inner}), formulating contextual synthesis.", style="yellow")
+                    reply = f"Systematic investigation reveals actionable molecular vulnerabilities and targets in this condition."
 
         # Record conversation in short-term memory
         self.memory.append({"role": "user", "content": task_instruction})

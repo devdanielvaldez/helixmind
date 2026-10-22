@@ -154,6 +154,13 @@ class SemanticIndex:
         else:
             self.matrix = np.vstack([self.matrix, norm_vecs])
 
+        # Optimize memory: release raw Python float lists now stored compactly in numpy matrix
+        for c in valid_chunks:
+            c.embedding = None
+
+        del texts, all_embeddings, new_vecs
+        rm.optimize_memory()
+
         return len(valid_chunks)
 
     async def search_async(

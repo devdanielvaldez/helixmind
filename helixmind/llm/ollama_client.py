@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sys
 import time
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, TypeVar, Union
 import httpx
@@ -551,22 +552,36 @@ class OllamaClient:
         else:
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
 
+        raw_text = ""
         try:
-            response = await self.chat_async(
+            async for token in self.chat_stream_async(
                 messages=augmented_messages,
                 model=model,
                 temperature=temperature,
-                format="json",
-            )
+            ):
+                sys.stdout.write(token)
+                sys.stdout.flush()
+                raw_text += token
+            sys.stdout.write("\n")
+            sys.stdout.flush()
         except Exception:
-            # Fallback without format="json" if Ollama grammar sampler encounters an issue
-            response = await self.chat_async(
-                messages=augmented_messages,
-                model=model,
-                temperature=temperature,
-                format=None,
-            )
-        raw_text = response.get("message", {}).get("content", "")
+            try:
+                response = await self.chat_async(
+                    messages=augmented_messages,
+                    model=model,
+                    temperature=temperature,
+                    format="json",
+                )
+                raw_text = response.get("message", {}).get("content", "")
+            except Exception:
+                # Fallback without format="json" if Ollama grammar sampler encounters an issue
+                response = await self.chat_async(
+                    messages=augmented_messages,
+                    model=model,
+                    temperature=temperature,
+                    format=None,
+                )
+                raw_text = response.get("message", {}).get("content", "")
         clean_json = self._clean_json_text(raw_text)
         try:
             return schema.model_validate_json(clean_json)
