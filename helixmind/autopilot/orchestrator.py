@@ -133,6 +133,7 @@ class AutoPilotOrchestrator:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         inv_id = f"INV-{int(datetime.now().timestamp())}"
+        slug = "".join([c if c.isalnum() else "_" for c in topic.lower()])[:30].strip("_")
 
         depth_cycles = {
             "deep": 2,
