@@ -91,6 +91,31 @@ class OllamaClient:
             base.update(options)
         return base
 
+    def _record_tokens(self, data: Dict[str, Any], chosen_model: str) -> None:
+        """Capture Ollama token metrics into the centralized TokenTracker."""
+        try:
+            from helixmind.core.tokens import get_token_tracker
+            tracker = get_token_tracker()
+            p_tokens = data.get("prompt_eval_count")
+            c_tokens = data.get("eval_count")
+            if p_tokens is None or c_tokens is None:
+                msg_content = data.get("message", {}).get("content", "")
+                c_tokens = c_tokens if c_tokens is not None else max(1, len(msg_content) // 4)
+                p_tokens = p_tokens if p_tokens is not None else 80
+
+            eval_dur = data.get("eval_duration", 0)
+            total_dur = data.get("total_duration", 0)
+            model_used = data.get("model", chosen_model)
+            tracker.record(
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                model=model_used,
+                eval_duration_ns=eval_dur,
+                total_duration_ns=total_dur,
+            )
+        except Exception:
+            pass
+
     # -------------------------------------------------------------------------
     # Health and Model Management
     # -------------------------------------------------------------------------
@@ -179,7 +204,9 @@ class OllamaClient:
                 with self._sync_client() as client:
                     res = client.post("/api/chat", json=payload)
                     if res.status_code == 200:
-                        return res.json()
+                        out = res.json()
+                        self._record_tokens(out, chosen_model)
+                        return out
 
                     err_detail = _extract_ollama_error_message(res)
                     if res.status_code == 404:
@@ -192,7 +219,9 @@ class OllamaClient:
                         payload_no_fmt.pop("format", None)
                         fb_res = client.post("/api/chat", json=payload_no_fmt)
                         if fb_res.status_code == 200:
-                            return fb_res.json()
+                            out = fb_res.json()
+                            self._record_tokens(out, chosen_model)
+                            return out
 
                     if res.status_code in (500, 502, 503, 504) and attempt < 2:
                         time.sleep(2.0)
@@ -226,7 +255,9 @@ class OllamaClient:
                 with self._sync_client() as client:
                     fb_res = client.post("/api/chat", json=payload_fallback)
                     if fb_res.status_code == 200:
-                        return fb_res.json()
+                        out = fb_res.json()
+                        self._record_tokens(out, self.default_model)
+                        return out
                     fb_err = _extract_ollama_error_message(fb_res)
                     raise OllamaResponseError(f"Ollama fallback error ({fb_res.status_code}) for '{self.default_model}': {fb_err}")
             except Exception as fb_exc:
@@ -264,7 +295,9 @@ class OllamaClient:
                 async with self._async_client() as client:
                     res = await client.post("/api/chat", json=payload)
                     if res.status_code == 200:
-                        return res.json()
+                        out = res.json()
+                        self._record_tokens(out, chosen_model)
+                        return out
 
                     err_detail = _extract_ollama_error_message(res)
                     if res.status_code == 404:
@@ -277,7 +310,9 @@ class OllamaClient:
                         payload_no_fmt.pop("format", None)
                         fb_res = await client.post("/api/chat", json=payload_no_fmt)
                         if fb_res.status_code == 200:
-                            return fb_res.json()
+                            out = fb_res.json()
+                            self._record_tokens(out, chosen_model)
+                            return out
 
                     if res.status_code in (500, 502, 503, 504) and attempt < 2:
                         await asyncio.sleep(2.0)
@@ -311,7 +346,9 @@ class OllamaClient:
                 async with self._async_client() as client:
                     fb_res = await client.post("/api/chat", json=payload_fallback)
                     if fb_res.status_code == 200:
-                        return fb_res.json()
+                        out = fb_res.json()
+                        self._record_tokens(out, self.default_model)
+                        return out
                     fb_err = _extract_ollama_error_message(fb_res)
                     raise OllamaResponseError(f"Ollama fallback error ({fb_res.status_code}) for '{self.default_model}': {fb_err}")
             except Exception as fb_exc:
@@ -347,6 +384,8 @@ class OllamaClient:
                 for line in response.iter_lines():
                     if line:
                         chunk = json.loads(line)
+                        if chunk.get("done"):
+                            self._record_tokens(chunk, chosen_model)
                         content = chunk.get("message", {}).get("content", "")
                         if content:
                             yield content
@@ -375,6 +414,8 @@ class OllamaClient:
                 async for line in response.aiter_lines():
                     if line:
                         chunk = json.loads(line)
+                        if chunk.get("done"):
+                            self._record_tokens(chunk, chosen_model)
                         content = chunk.get("message", {}).get("content", "")
                         if content:
                             yield content

@@ -25,13 +25,17 @@ import {
   Scissors,
   Search,
   Send,
+  Server,
   ShieldAlert,
   Sparkles,
   Terminal,
   TrendingUp,
   Upload,
   Users,
+  X,
   Zap,
+  ExternalLink,
+  HardDrive,
 } from 'lucide-react';
 
 const API_BASE = typeof window !== 'undefined' && window.location.port !== '5173'
@@ -56,6 +60,20 @@ export default function App() {
   const [trialsLimit, setTrialsLimit] = useState(2);
   const [isRunning, setIsRunning] = useState(false);
   const [currentInvId, setCurrentInvId] = useState(null);
+
+  // System Hardware, Background Missions & Token Telemetry
+  const [systemMetrics, setSystemMetrics] = useState({
+    cpu: { cpu_percent: 0, total_cores: 8, safe_threads: 6, per_core_percent: [] },
+    memory: { total_gb: 16, used_gb: 4, available_gb: 12, percent_used: 25 },
+    tokens: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0, last_speed_tps: 0, estimated_commercial_value_usd: 0 },
+    process: { pid: 0, cpu_percent: 0, memory_mb: 0, status: 'idle' },
+  });
+  const [backgroundTasks, setBackgroundTasks] = useState([]);
+  const [analyzedPapers, setAnalyzedPapers] = useState([]);
+  const [selectedPaperForModal, setSelectedPaperForModal] = useState(null);
+  const [paperSearchQuery, setPaperSearchQuery] = useState('');
+  const [rawCliLogs, setRawCliLogs] = useState('');
+  const [autoScrollLogs, setAutoScrollLogs] = useState(true);
 
   // Live Real-Time Feed Data
   const [eventLogs, setEventLogs] = useState([]);
@@ -259,12 +277,21 @@ export default function App() {
   const logTerminalRef = useRef(null);
   const chatBottomRef = useRef(null);
 
-  // 1. Fetch Health on Mount
+  // 1. Fetch Health, Check URL query param, and init
   useEffect(() => {
     fetch(`${API_BASE}/api/health`)
       .then((r) => r.json())
       .then((data) => setSystemHealth(data))
       .catch((e) => console.warn('Health fetch error:', e));
+
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search);
+      const urlInv = searchParams.get('inv');
+      if (urlInv) {
+        setCurrentInvId(urlInv);
+        loadInvestigationData(urlInv);
+      }
+    }
 
     connectWebSocket();
     loadVisuals('tamoxifen', 'pCas9-sgRNA-Puro');
@@ -273,6 +300,90 @@ export default function App() {
       if (wsRef.current) wsRef.current.close();
     };
   }, []);
+
+  // 1.1 Poll System Telemetry, Tokens, and Background Tasks
+  useEffect(() => {
+    const fetchTelemetry = () => {
+      fetch(`${API_BASE}/api/system/metrics`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.cpu) setSystemMetrics(data);
+        })
+        .catch(() => {});
+
+      fetch(`${API_BASE}/api/background/tasks`)
+        .then((r) => r.json())
+        .then((tasks) => {
+          if (Array.isArray(tasks)) {
+            setBackgroundTasks(tasks);
+            const activeRunning = tasks.find((t) => t.is_alive || t.status === 'running');
+            if (activeRunning) {
+              setIsRunning(true);
+              if (!currentInvId) {
+                setCurrentInvId(activeRunning.investigation_id);
+              }
+            } else if (tasks.length > 0 && !currentInvId) {
+              setCurrentInvId(tasks[0].investigation_id);
+            }
+          }
+        })
+        .catch(() => {});
+
+      if (currentInvId) {
+        fetch(`${API_BASE}/api/background/tasks/${currentInvId}/logs?lines=200`)
+          .then((r) => r.json())
+          .then((ldata) => {
+            if (ldata && ldata.logs) setRawCliLogs(ldata.logs);
+          })
+          .catch(() => {});
+
+        fetch(`${API_BASE}/api/investigations/${currentInvId}/papers`)
+          .then((r) => r.json())
+          .then((papers) => {
+            if (Array.isArray(papers) && papers.length > 0) {
+              setAnalyzedPapers(papers);
+            }
+          })
+          .catch(() => {});
+      }
+    };
+
+    fetchTelemetry();
+    const timer = setInterval(fetchTelemetry, 2500);
+    return () => clearInterval(timer);
+  }, [currentInvId]);
+
+  const loadInvestigationData = async (invId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/investigations/${invId}/status`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'running') setIsRunning(true);
+        if (data.status === 'completed') setIsRunning(false);
+        if (data.tokens) {
+          setSystemMetrics((prev) => ({ ...prev, tokens: data.tokens }));
+        }
+        if (data.live_state?.hypotheses) setHypotheses(data.live_state.hypotheses);
+        if (data.live_state?.papers) setAnalyzedPapers(data.live_state.papers);
+      }
+
+      const pRes = await fetch(`${API_BASE}/api/investigations/${invId}/papers`);
+      if (pRes.ok) {
+        const papers = await pRes.json();
+        if (Array.isArray(papers) && papers.length > 0) {
+          setAnalyzedPapers(papers);
+        }
+      }
+
+      const lRes = await fetch(`${API_BASE}/api/background/tasks/${invId}/logs?lines=200`);
+      if (lRes.ok) {
+        const ldata = await lRes.json();
+        if (ldata.logs) setRawCliLogs(ldata.logs);
+      }
+    } catch (e) {
+      console.warn('Error loading investigation:', e);
+    }
+  };
 
   // 2. Connect to Live WebSocket
   const connectWebSocket = () => {
@@ -387,6 +498,12 @@ export default function App() {
         }
         break;
 
+      case 'literature:ingested':
+        if (data && data.papers && Array.isArray(data.papers)) {
+          setAnalyzedPapers(data.papers);
+        }
+        break;
+
       case 'paper:authored':
         if (data) {
           setLatestPaper(data);
@@ -403,6 +520,9 @@ export default function App() {
 
       case 'investigation:completed':
         setIsRunning(false);
+        if (data && data.token_usage) {
+          setSystemMetrics((prev) => ({ ...prev, tokens: data.token_usage }));
+        }
         break;
 
       default:
@@ -451,6 +571,49 @@ export default function App() {
     } catch (e) {
       console.error(e);
       setIsRunning(false);
+    }
+  };
+
+  const handleLaunchDaemon = async () => {
+    if (!topicInput.trim() || isRunning) return;
+
+    setIsRunning(true);
+    setEventLogs([]);
+    setActiveAgents([]);
+    setEvidenceList([]);
+    setHypotheses([]);
+    setMilestones([]);
+    setLatestPaper(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/background/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: topicInput,
+          depth: depthInput,
+          papers: papersLimit,
+          trials: trialsLimit,
+        }),
+      });
+      const data = await res.json();
+      if (data.investigation_id) {
+        setCurrentInvId(data.investigation_id);
+        addLog('Launch', `Detached PM2-style daemon spawned: ${data.investigation_id} (PID ${data.pid}). Safe to disconnect SSH!`);
+      }
+    } catch (e) {
+      console.error(e);
+      setIsRunning(false);
+    }
+  };
+
+  const handleStopTask = async (taskId) => {
+    try {
+      await fetch(`${API_BASE}/api/background/tasks/${taskId}/stop`, { method: 'POST' });
+      addLog('System', `Mission ${taskId} stopped.`);
+      setIsRunning(false);
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -847,8 +1010,43 @@ export default function App() {
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#090d16', padding: '6px 14px', borderRadius: '20px', border: '1px solid #1e293b', fontSize: '12px', color: '#94a3b8' }}>
+          {/* Hardware Telemetry Pills & PM2 Tasks */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#090d16', padding: '6px 12px', borderRadius: '20px', border: '1px solid #1e293b', fontSize: '12px' }}>
             <Cpu size={14} color="#38bdf8" />
+            <span>CPU: <b style={{ color: (systemMetrics.cpu?.cpu_percent || 0) > 80 ? '#f43f5e' : (systemMetrics.cpu?.cpu_percent || 0) > 60 ? '#f59e0b' : '#38bdf8' }}>{systemMetrics.cpu?.cpu_percent || 0}%</b></span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#090d16', padding: '6px 12px', borderRadius: '20px', border: '1px solid #1e293b', fontSize: '12px', color: '#94a3b8' }}>
+            <HardDrive size={14} color="#a855f7" />
+            <span>RAM: <b style={{ color: '#a855f7' }}>{systemMetrics.memory?.used_gb || 0}/{systemMetrics.memory?.total_gb || 16}GB</b></span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#090d16', padding: '6px 12px', borderRadius: '20px', border: '1px solid #1e293b', fontSize: '12px', color: '#94a3b8' }}>
+            <Zap size={14} color="#f59e0b" />
+            <span>Tokens: <b style={{ color: '#f59e0b' }}>{(systemMetrics.tokens?.total_tokens || 0).toLocaleString()}</b> <span style={{ fontSize: '10px', color: '#64748b' }}>({systemMetrics.tokens?.last_speed_tps || 0} t/s)</span></span>
+          </div>
+
+          {backgroundTasks.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#090d16', padding: '4px 10px', borderRadius: '20px', border: '1px solid #0284c7' }}>
+              <Server size={14} color="#38bdf8" />
+              <select
+                value={currentInvId || ''}
+                onChange={(e) => {
+                  setCurrentInvId(e.target.value);
+                  loadInvestigationData(e.target.value);
+                }}
+                style={{ background: 'transparent', border: 'none', color: '#38bdf8', fontSize: '11px', outline: 'none', cursor: 'pointer' }}
+              >
+                {backgroundTasks.map((t) => (
+                  <option key={t.investigation_id} value={t.investigation_id} style={{ background: '#0f172a', color: '#fff' }}>
+                    {t.investigation_id}: {t.topic?.slice(0, 22)} ({t.status.toUpperCase()})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#090d16', padding: '6px 14px', borderRadius: '20px', border: '1px solid #1e293b', fontSize: '12px', color: '#94a3b8' }}>
             <span>Model: <b style={{ color: '#38bdf8' }}>{systemHealth?.default_model || 'llama3.2:1b'}</b></span>
           </div>
         </div>
@@ -856,10 +1054,14 @@ export default function App() {
 
       {/* 2. STATS & SUMMARY STRIP */}
       <div style={{ borderBottom: '1px solid #1e293b', background: '#080d1a', padding: '10px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', overflowX: 'auto' }}>
-        <div style={{ display: 'flex', gap: '28px' }}>
+        <div style={{ display: 'flex', gap: '24px' }}>
           <div>
-            <div style={{ fontSize: '11px', color: '#64748b' }}>EVIDENCE ITEMS</div>
-            <div style={{ fontSize: '16px', fontWeight: 700, color: '#38bdf8' }}>{evidenceList.length || 5} Primary Papers</div>
+            <div style={{ fontSize: '11px', color: '#64748b' }}>EVIDENCE PAPERS</div>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: '#38bdf8' }}>{analyzedPapers.length || evidenceList.length || 5} Publications</div>
+          </div>
+          <div>
+            <div style={{ fontSize: '11px', color: '#64748b' }}>TOKENS EVALUATED</div>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: '#f59e0b' }}>{(systemMetrics.tokens?.total_tokens || 0).toLocaleString()} Tok</div>
           </div>
           <div>
             <div style={{ fontSize: '11px', color: '#64748b' }}>KNOWLEDGE GRAPH</div>
@@ -870,8 +1072,10 @@ export default function App() {
             <div style={{ fontSize: '16px', fontWeight: 700, color: '#10b981' }}>{activeAgents.length || 8} Deployed</div>
           </div>
           <div>
-            <div style={{ fontSize: '11px', color: '#64748b' }}>VIRTUAL TRIAL PoS</div>
-            <div style={{ fontSize: '16px', fontWeight: 700, color: '#10b981' }}>89.2% Projected</div>
+            <div style={{ fontSize: '11px', color: '#64748b' }}>MISSION STATUS</div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: isRunning ? '#10b981' : '#94a3b8' }}>
+              {isRunning ? 'RUNNING (DAEMON)' : 'STANDBY'}
+            </div>
           </div>
         </div>
 
@@ -879,7 +1083,12 @@ export default function App() {
         <div style={{ display: 'flex', gap: '6px', background: '#0f172a', padding: '4px', borderRadius: '8px', border: '1px solid #1e293b', overflowX: 'auto' }}>
           {[
             { id: 'war_room', label: 'War Room', icon: Activity },
+            { id: 'papers_read', label: `Papers Read (${analyzedPapers.length || evidenceList.length || 0})`, icon: BookOpen },
+            { id: 'cli_terminal', label: 'CLI Terminal Stream', icon: Terminal },
+            { id: 'graph', label: 'Epistemic Graph', icon: Network },
             { id: 'chat', label: 'Copilot Chat', icon: MessageSquare },
+            { id: 'evidence', label: 'Evidence Matrix', icon: BookOpen },
+            { id: 'paper', label: 'Scientific Paper', icon: FileText },
             { id: 'depmap', label: 'DepMap Genomics', icon: Database },
             { id: 'fda', label: 'openFDA Safety', icon: AlertTriangle },
             { id: 'clinvar', label: 'ClinVar Variants', icon: ShieldAlert },
@@ -888,11 +1097,8 @@ export default function App() {
             { id: 'trial_sim', label: 'Virtual Patients', icon: Users },
             { id: 'crispr', label: 'CRISPR & Primers', icon: Scissors },
             { id: 'visuals', label: 'DNA & Molecules', icon: Dna },
-            { id: 'graph', label: 'Epistemic Graph', icon: Network },
-            { id: 'evidence', label: 'Evidence Matrix', icon: BookOpen },
             { id: 'insilico', label: 'In-Silico Station', icon: Atom },
             { id: 'tribunal', label: 'Peer Tribunal', icon: ShieldAlert },
-            { id: 'paper', label: 'Scientific Paper', icon: FileText },
           ].map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -928,72 +1134,144 @@ export default function App() {
       <main style={{ padding: '24px', maxWidth: '1600px', margin: '0 auto' }}>
         {/* VIEW 1: WAR ROOM / MISSION CONTROL */}
         {activeTab === 'war_room' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '24px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-                  <Flame size={18} color="#f59e0b" />
-                  <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Launch Autonomous Mission</h3>
-                </div>
-
-                <div style={{ marginBottom: '14px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: '6px' }}>RESEARCH TARGET / CONDITION</label>
-                  <input
-                    type="text"
-                    value={topicInput}
-                    onChange={(e) => setTopicInput(e.target.value)}
-                    placeholder="e.g. glioblastoma inmunoterapia, breast cancer HER2"
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#020617', border: '1px solid #334155', color: '#fff', fontSize: '13px' }}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>DEPTH</label>
-                    <select
-                      value={depthInput}
-                      onChange={(e) => setDepthInput(e.target.value)}
-                      style={{ width: '100%', padding: '8px', background: '#020617', border: '1px solid #334155', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
-                    >
-                      <option value="deep">Deep (2 Cycles + Sub-Queries, Default)</option>
-                      <option value="exhaustive">Exhaustive (3 Cycles + Escape Mapping)</option>
-                      <option value="institutional">Institutional (4 Cycles + Complete Discovery)</option>
-                    </select>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Active Background Mission Daemon Banner */}
+            {backgroundTasks.find((t) => t.is_alive || t.status === 'running') && (() => {
+              const activeMission = backgroundTasks.find((t) => t.is_alive || t.status === 'running');
+              return (
+                <div style={{ background: 'linear-gradient(90deg, rgba(2, 132, 199, 0.15), rgba(16, 185, 129, 0.15))', border: '1px solid #0284c7', borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Server size={20} color="#fff" />
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '15px', color: '#f8fafc' }}>{activeMission.topic}</span>
+                        <span style={{ background: '#10b981', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '10px' }}>RUNNING IN BACKGROUND (PM2 DAEMON)</span>
+                        <span style={{ background: '#1e293b', color: '#94a3b8', fontSize: '11px', padding: '2px 8px', borderRadius: '4px' }}>PID: {activeMission.pid}</span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                        ID: <b style={{ color: '#38bdf8' }}>{activeMission.investigation_id}</b> | Uptime: <b>{activeMission.uptime}</b> | CPU: <b>{activeMission.cpu_percent || systemMetrics.cpu?.cpu_percent || 0}%</b> | RAM: <b>{activeMission.memory_mb || systemMetrics.process?.memory_mb || 0} MB</b> | Tokens: <b style={{ color: '#f59e0b' }}>{(systemMetrics.tokens?.total_tokens || 0).toLocaleString()}</b>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>PAPERS</label>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => setActiveTab('cli_terminal')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0f172a', border: '1px solid #334155', color: '#38bdf8', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      <Terminal size={14} /> View CLI Stream
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('papers_read')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0f172a', border: '1px solid #334155', color: '#10b981', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      <BookOpen size={14} /> Read Papers ({analyzedPapers.length || evidenceList.length})
+                    </button>
+                    <button
+                      onClick={() => handleStopTask(activeMission.investigation_id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#e11d48', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      Stop Mission
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '24px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                    <Flame size={18} color="#f59e0b" />
+                    <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Launch Autonomous Mission</h3>
+                  </div>
+
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: '6px' }}>RESEARCH TARGET / CONDITION</label>
                     <input
-                      type="number"
-                      value={papersLimit}
-                      onChange={(e) => setPapersLimit(Number(e.target.value))}
-                      style={{ width: '100%', padding: '8px', background: '#020617', border: '1px solid #334155', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
+                      type="text"
+                      value={topicInput}
+                      onChange={(e) => setTopicInput(e.target.value)}
+                      placeholder="e.g. glioblastoma inmunoterapia, breast cancer HER2"
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#020617', border: '1px solid #334155', color: '#fff', fontSize: '13px' }}
                     />
                   </div>
-                </div>
 
-                <button
-                  onClick={handleLaunchInvestigation}
-                  disabled={isRunning}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    background: isRunning ? '#334155' : 'linear-gradient(135deg, #0284c7, #2563eb)',
-                    color: '#fff',
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    cursor: isRunning ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                  }}
-                >
-                  {isRunning ? <RefreshCw className="spin-slow" size={16} /> : <Play size={16} />}
-                  {isRunning ? 'Investigation in Progress...' : 'Launch Auto-Pilot Research'}
-                </button>
-              </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>DEPTH</label>
+                      <select
+                        value={depthInput}
+                        onChange={(e) => setDepthInput(e.target.value)}
+                        style={{ width: '100%', padding: '8px', background: '#020617', border: '1px solid #334155', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
+                      >
+                        <option value="deep">Deep (2 Cycles, Default)</option>
+                        <option value="exhaustive">Exhaustive (3 Cycles)</option>
+                        <option value="institutional">Institutional (4 Cycles)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: '4px' }}>PAPERS</label>
+                      <input
+                        type="number"
+                        value={papersLimit}
+                        onChange={(e) => setPapersLimit(Number(e.target.value))}
+                        style={{ width: '100%', padding: '8px', background: '#020617', border: '1px solid #334155', color: '#fff', borderRadius: '6px', fontSize: '12px' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <button
+                      onClick={handleLaunchDaemon}
+                      disabled={isRunning}
+                      style={{
+                        width: '100%',
+                        padding: '11px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: isRunning ? '#334155' : 'linear-gradient(135deg, #10b981, #059669)',
+                        color: '#fff',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        cursor: isRunning ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        boxShadow: isRunning ? 'none' : '0 4px 12px rgba(16, 185, 129, 0.25)',
+                      }}
+                    >
+                      <Server size={15} />
+                      {isRunning ? 'Mission Running in Background...' : 'Launch in Background (PM2 Daemon, SSH-Safe)'}
+                    </button>
+
+                    <button
+                      onClick={handleLaunchInvestigation}
+                      disabled={isRunning}
+                      style={{
+                        width: '100%',
+                        padding: '9px',
+                        borderRadius: '8px',
+                        border: '1px solid #334155',
+                        background: isRunning ? '#1e293b' : '#090d16',
+                        color: isRunning ? '#64748b' : '#38bdf8',
+                        fontWeight: 600,
+                        fontSize: '12px',
+                        cursor: isRunning ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                      }}
+                    >
+                      {isRunning ? <RefreshCw className="spin-slow" size={14} /> : <Play size={14} />}
+                      {isRunning ? 'Investigation in Progress...' : 'Run Live in Foreground'}
+                    </button>
+                  </div>
+                </div>
 
               {/* Dynamic Agent Roster */}
               <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '18px' }}>
@@ -1104,6 +1382,257 @@ export default function App() {
                   ))}
                 </div>
               </div>
+
+              {/* Analyzed Publications in War Room */}
+              <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <BookOpen size={18} color="#38bdf8" />
+                    <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Analyzed Literature ({analyzedPapers.length || evidenceList.length})</h3>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('papers_read')}
+                    style={{ background: 'transparent', border: '1px solid #334155', color: '#38bdf8', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}
+                  >
+                    View All in Library →
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  {(analyzedPapers.length > 0
+                    ? analyzedPapers
+                    : evidenceList.map((e) => ({
+                        id: e.paper_id,
+                        pmid: e.paper_id,
+                        title: e.paper_title,
+                        abstract: e.key_excerpt || e.selection_rationale,
+                        authors: [e.agent_name || 'Dr. Synapse'],
+                        journal: 'Peer-Reviewed Biomedical Source',
+                        pub_year: 2024,
+                      }))
+                  ).slice(0, 4).map((p, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => setSelectedPaperForModal(p)}
+                      style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '8px', padding: '14px', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                        <span style={{ background: '#0284c7', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px' }}>
+                          {p.pmid ? `PMID: ${p.pmid}` : p.id ? `ID: ${p.id}` : 'PUB'}
+                        </span>
+                        {p.pub_year && <span style={{ color: '#94a3b8', fontSize: '11px' }}>({p.pub_year})</span>}
+                      </div>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#f8fafc', marginBottom: '6px', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {p.title || p.paper_title}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#38bdf8', fontSize: '11px', fontWeight: 600 }}>
+                        <BookOpen size={12} /> Click to Read Abstract
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+        {/* VIEW: PAPERS READ EXPLORER */}
+        {activeTab === 'papers_read' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <BookOpen size={20} color="#38bdf8" /> Literature Ingestion Library & Monograph References
+                </h3>
+                <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                  Browse every publication retrieved and read from NCBI PubMed, Europe PMC, and ClinicalTrials.gov during this autonomous mission.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ position: 'relative' }}>
+                  <Search size={14} color="#64748b" style={{ position: 'absolute', left: '10px', top: '10px' }} />
+                  <input
+                    type="text"
+                    value={paperSearchQuery}
+                    onChange={(e) => setPaperSearchQuery(e.target.value)}
+                    placeholder="Filter papers by title, author, gene..."
+                    style={{ background: '#020617', border: '1px solid #334155', borderRadius: '8px', padding: '8px 12px 8px 32px', color: '#fff', fontSize: '12px', width: '280px' }}
+                  />
+                </div>
+                <span style={{ background: '#1e293b', color: '#38bdf8', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600 }}>
+                  {analyzedPapers.length || evidenceList.length} Papers
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '16px' }}>
+              {(analyzedPapers.length > 0
+                ? analyzedPapers
+                : evidenceList.map((e) => ({
+                    id: e.paper_id,
+                    pmid: e.paper_id,
+                    title: e.paper_title,
+                    abstract: e.key_excerpt || e.selection_rationale,
+                    authors: [e.agent_name || 'Dr. Synapse'],
+                    journal: 'Peer-Reviewed Biomedical Source',
+                    pub_year: 2024,
+                  }))
+              )
+                .filter((p) => {
+                  if (!paperSearchQuery.trim()) return true;
+                  const q = paperSearchQuery.toLowerCase();
+                  return (
+                    (p.title && p.title.toLowerCase().includes(q)) ||
+                    (p.abstract && p.abstract.toLowerCase().includes(q)) ||
+                    (p.journal && p.journal.toLowerCase().includes(q)) ||
+                    (p.pmid && String(p.pmid).includes(q))
+                  );
+                })
+                .map((paper, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: '#0f172a',
+                      border: '1px solid #1e293b',
+                      borderRadius: '10px',
+                      padding: '18px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      transition: 'border-color 0.15s ease',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                        {paper.pmid && (
+                          <span style={{ background: '#0284c7', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px' }}>
+                            PMID: {paper.pmid}
+                          </span>
+                        )}
+                        {paper.doi && (
+                          <span style={{ background: '#6366f1', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px' }}>
+                            DOI
+                          </span>
+                        )}
+                        {paper.pub_year && (
+                          <span style={{ background: '#1e293b', color: '#94a3b8', fontSize: '10px', fontWeight: 600, padding: '2px 8px', borderRadius: '4px' }}>
+                            {paper.pub_year}
+                          </span>
+                        )}
+                        {paper.is_open_access && (
+                          <span style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid #10b981', fontSize: '10px', fontWeight: 700, padding: '1px 6px', borderRadius: '4px' }}>
+                            OPEN ACCESS
+                          </span>
+                        )}
+                      </div>
+
+                      <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', lineHeight: 1.4, marginBottom: '8px' }}>
+                        {paper.title}
+                      </h4>
+
+                      {paper.journal && (
+                        <div style={{ fontSize: '11px', color: '#38bdf8', marginBottom: '8px', fontStyle: 'italic' }}>
+                          {paper.journal}
+                        </div>
+                      )}
+
+                      {paper.authors && paper.authors.length > 0 && (
+                        <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '10px' }}>
+                          <b>Authors:</b> {paper.authors.slice(0, 3).join(', ')}{paper.authors.length > 3 ? ' et al.' : ''}
+                        </div>
+                      )}
+
+                      <div style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.5, maxHeight: '95px', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', marginBottom: '14px' }}>
+                        {paper.abstract || 'Abstract indexed for vector RAG multi-agent reasoning.'}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '12px', borderTop: '1px solid #1e293b' }}>
+                      <button
+                        onClick={() => setSelectedPaperForModal(paper)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        <BookOpen size={14} /> Open Full Paper
+                      </button>
+
+                      {paper.pmid && (
+                        <a
+                          href={`https://pubmed.ncbi.nlm.nih.gov/${paper.pmid}/`}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#38bdf8', fontSize: '11px', textDecoration: 'none' }}
+                        >
+                          NCBI PubMed <ExternalLink size={12} />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* VIEW: LIVE BACKGROUND CLI TERMINAL STREAM */}
+        {activeTab === 'cli_terminal' && (
+          <div style={{ background: '#090d16', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Terminal size={20} color="#10b981" />
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc' }}>
+                    Background Process Live Terminal Stream (CLI Console)
+                  </h3>
+                  <div style={{ fontSize: '12px', color: '#64748b' }}>
+                    Real-time standard output and execution telemetry of the detached daemon.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#94a3b8', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoScrollLogs}
+                    onChange={(e) => setAutoScrollLogs(e.target.checked)}
+                  />
+                  Auto-scroll
+                </label>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(rawCliLogs || eventLogs.map((l) => `[${l.timestamp}] ${l.author}: ${l.message}`).join('\n'));
+                  }}
+                  style={{ background: '#1e293b', border: '1px solid #334155', color: '#cbd5e1', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}
+                >
+                  Copy Logs
+                </button>
+              </div>
+            </div>
+
+            <div
+              ref={logTerminalRef}
+              style={{
+                background: '#020617',
+                border: '1px solid #1e293b',
+                borderRadius: '8px',
+                padding: '16px',
+                fontFamily: 'JetBrains Mono, Menlo, monospace',
+                fontSize: '12px',
+                lineHeight: 1.5,
+                color: '#e2e8f0',
+                minHeight: '550px',
+                maxHeight: '700px',
+                overflowY: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+              }}
+            >
+              {rawCliLogs ||
+                (eventLogs.length > 0
+                  ? eventLogs.map((l) => `[${l.timestamp}] ${l.author}: ${l.message}`).join('\n')
+                  : 'Waiting for background process logs...')}
+              <span style={{ color: '#10b981' }}> ▋</span>
             </div>
           </div>
         )}
@@ -1982,6 +2511,156 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* 4. PAPER READER MODAL */}
+      {selectedPaperForModal && (
+        <div
+          onClick={() => setSelectedPaperForModal(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 100,
+            background: 'rgba(2, 6, 23, 0.85)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: '14px',
+              maxWidth: '850px',
+              width: '100%',
+              maxHeight: '85vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.75)',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: '#090d16' }}>
+              <div style={{ paddingRight: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                  {selectedPaperForModal.pmid && (
+                    <span style={{ background: '#0284c7', color: '#fff', fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px' }}>
+                      PMID: {selectedPaperForModal.pmid}
+                    </span>
+                  )}
+                  {selectedPaperForModal.pmcid && (
+                    <span style={{ background: '#0891b2', color: '#fff', fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px' }}>
+                      PMC: {selectedPaperForModal.pmcid}
+                    </span>
+                  )}
+                  {selectedPaperForModal.pub_year && (
+                    <span style={{ background: '#1e293b', color: '#94a3b8', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '4px' }}>
+                      Year: {selectedPaperForModal.pub_year}
+                    </span>
+                  )}
+                  {selectedPaperForModal.journal && (
+                    <span style={{ color: '#38bdf8', fontSize: '12px', fontStyle: 'italic' }}>
+                      {selectedPaperForModal.journal}
+                    </span>
+                  )}
+                </div>
+                <h3 style={{ fontSize: '17px', fontWeight: 700, color: '#f8fafc', lineHeight: 1.4 }}>
+                  {selectedPaperForModal.title || selectedPaperForModal.paper_title}
+                </h3>
+              </div>
+
+              <button
+                onClick={() => setSelectedPaperForModal(null)}
+                style={{ background: '#1e293b', border: 'none', color: '#94a3b8', width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              {selectedPaperForModal.authors && selectedPaperForModal.authors.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Authors</div>
+                  <div style={{ fontSize: '13px', color: '#cbd5e1' }}>
+                    {selectedPaperForModal.authors.join(', ')}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Links */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {selectedPaperForModal.pmid && (
+                  <a
+                    href={`https://pubmed.ncbi.nlm.nih.gov/${selectedPaperForModal.pmid}/`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0284c7', color: '#fff', padding: '6px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, textDecoration: 'none' }}
+                  >
+                    Open on PubMed <ExternalLink size={13} />
+                  </a>
+                )}
+                {selectedPaperForModal.pmcid && (
+                  <a
+                    href={`https://europepmc.org/article/PMC/${selectedPaperForModal.pmcid}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0f766e', color: '#fff', padding: '6px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, textDecoration: 'none' }}
+                  >
+                    Europe PMC Full Article <ExternalLink size={13} />
+                  </a>
+                )}
+                {selectedPaperForModal.doi && (
+                  <a
+                    href={`https://doi.org/${selectedPaperForModal.doi}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#4338ca', color: '#fff', padding: '6px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, textDecoration: 'none' }}
+                  >
+                    DOI Resolver <ExternalLink size={13} />
+                  </a>
+                )}
+              </div>
+
+              {/* Abstract */}
+              <div>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>Abstract</div>
+                <div style={{ background: '#020617', border: '1px solid #1e293b', borderRadius: '8px', padding: '16px', fontSize: '13px', color: '#cbd5e1', lineHeight: 1.6 }}>
+                  {selectedPaperForModal.abstract || selectedPaperForModal.key_excerpt || 'No abstract text available for this publication.'}
+                </div>
+              </div>
+
+              {/* MeSH Terms if available */}
+              {selectedPaperForModal.mesh_terms && selectedPaperForModal.mesh_terms.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', marginBottom: '6px' }}>MeSH Keywords</div>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {selectedPaperForModal.mesh_terms.map((term, i) => (
+                      <span key={i} style={{ background: '#1e293b', color: '#38bdf8', fontSize: '11px', padding: '3px 8px', borderRadius: '4px' }}>
+                        {term}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ padding: '14px 24px', borderTop: '1px solid #1e293b', background: '#090d16', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setSelectedPaperForModal(null)}
+                style={{ background: '#334155', border: 'none', color: '#fff', padding: '8px 18px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

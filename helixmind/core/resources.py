@@ -100,6 +100,74 @@ class SystemResourceGuard:
             "cpu_percent": cpu_pct,
         }
 
+    def get_full_metrics(self, pid: Optional[int] = None) -> Dict[str, Any]:
+        """Obtain holistic hardware consumption metrics, process health, and token counters."""
+        mem = self.get_memory_info()
+        cpu = self.get_cpu_info()
+        
+        per_cpu = []
+        swap_info = {"total_gb": 0.0, "used_gb": 0.0, "percent": 0.0}
+        boot_time = 0.0
+        
+        if HAS_PSUTIL:
+            try:
+                per_cpu = psutil.cpu_percent(interval=None, percpu=True)
+                sw = psutil.swap_memory()
+                swap_info = {
+                    "total_gb": round(sw.total / (1024 ** 3), 2),
+                    "used_gb": round(sw.used / (1024 ** 3), 2),
+                    "percent": sw.percent,
+                }
+                boot_time = psutil.boot_time()
+            except Exception:
+                pass
+
+        # Target process metrics
+        target_pid = pid or os.getpid()
+        proc_data = {
+            "pid": target_pid,
+            "cpu_percent": 0.0,
+            "memory_mb": 0.0,
+            "memory_percent": 0.0,
+            "status": "running",
+            "threads_count": 1,
+        }
+        if HAS_PSUTIL:
+            try:
+                p = psutil.Process(target_pid)
+                p_mem = p.memory_info()
+                proc_data = {
+                    "pid": target_pid,
+                    "cpu_percent": p.cpu_percent(interval=None),
+                    "memory_mb": round(p_mem.rss / (1024 * 1024), 1),
+                    "memory_percent": round(p.memory_percent(), 2),
+                    "status": p.status(),
+                    "threads_count": p.num_threads(),
+                }
+            except Exception:
+                pass
+
+        # Tokens
+        tokens_summary = {}
+        try:
+            from helixmind.core.tokens import get_token_tracker
+            tokens_summary = get_token_tracker().get_metrics()
+        except Exception:
+            pass
+
+        return {
+            "cpu": {
+                **cpu,
+                "per_core_percent": per_cpu,
+            },
+            "memory": mem,
+            "swap": swap_info,
+            "process": proc_data,
+            "platform": sys.platform,
+            "system_uptime_sec": round(time.time() - boot_time, 1) if boot_time else 0.0,
+            "tokens": tokens_summary,
+        }
+
     def get_safe_ollama_options(self, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Build a safe options dictionary for Ollama API calls.
         

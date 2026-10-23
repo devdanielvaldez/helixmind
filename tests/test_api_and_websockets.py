@@ -81,3 +81,37 @@ async def test_websocket_manager_broadcast():
         message="Test event",
         data={"key": "val"},
     )
+
+
+def test_system_metrics_and_tokens_endpoints():
+    res_metrics = client.get("/api/system/metrics")
+    assert res_metrics.status_code == 200
+    metrics = res_metrics.json()
+    assert "cpu" in metrics
+    assert "memory" in metrics
+    assert "tokens" in metrics
+
+    res_tokens = client.get("/api/system/tokens")
+    assert res_tokens.status_code == 200
+    tokens = res_tokens.json()
+    assert "total_tokens" in tokens
+    assert "prompt_tokens" in tokens
+    assert "completion_tokens" in tokens
+
+
+def test_background_tasks_endpoints():
+    res = client.get("/api/background/tasks")
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+
+
+def test_investigation_papers_and_status_endpoints():
+    res_papers = client.get("/api/investigations/INV-SAMPLE/papers")
+    assert res_papers.status_code == 200
+    assert isinstance(res_papers.json(), list)
+
+    res_status = client.get("/api/investigations/INV-SAMPLE/status")
+    assert res_status.status_code == 200
+    status_data = res_status.json()
+    assert "investigation_id" in status_data
+    assert "tokens" in status_data

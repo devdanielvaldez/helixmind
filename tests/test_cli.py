@@ -77,3 +77,14 @@ def test_cli_tools_subcommand():
 
     with patch.object(sys, "argv", ["helixmind", "tools", "crispr", "CD274"]):
         main()
+
+
+def test_cli_background_commands():
+    with patch.object(sys, "argv", ["helixmind", "ps"]):
+        main()
+
+    with patch.object(sys, "argv", ["helixmind", "logs", "NONEXISTENT", "-n", "10"]):
+        main()
+
+    with patch.object(sys, "argv", ["helixmind", "stop", "NONEXISTENT"]):
+        main()

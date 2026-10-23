@@ -7,6 +7,10 @@ services:
     container_name: helixmind-ollama
     ports:
       - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
@@ -18,6 +22,14 @@ services:
       start_period: 5s
     networks:
       - helixmind-net
+    # Optional GPU support (uncomment if your Linux server has NVIDIA GPU with nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   # ----------------------------------------------------------------------------
   # Model Initializer: Automatically pulls required LLM and Embedding models
@@ -36,8 +48,10 @@ services:
         until curl -s http://ollama:11434/api/tags > /dev/null; do
           sleep 2
         done
-        echo "Pulling llama3.2:1b (Fast Agent & Reasoning LLM)..."
+        echo "Pulling llama3.2:1b (Fast Agent LLM)..."
         curl -s -X POST http://ollama:11434/api/pull -d '{"name": "llama3.2:1b"}'
+        echo "Pulling deepseek-r1:1.5b (Reasoning Specialist)..."
+        curl -s -X POST http://ollama:11434/api/pull -d '{"name": "deepseek-r1:1.5b"}'
         echo "Pulling nomic-embed-text:latest (Biomedical Vector RAG Embeddings)..."
         curl -s -X POST http://ollama:11434/api/pull -d '{"name": "nomic-embed-text:latest"}'
         echo "Ollama model provisioning complete!"
@@ -58,11 +72,15 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - PYTHONUNBUFFERED=1
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_TIMEOUT=120.0
       - OLLAMA_DEFAULT_MODEL=llama3.2:1b
-      - OLLAMA_REASONING_MODEL=llama3.2:1b
+      - OLLAMA_REASONING_MODEL=deepseek-r1:1.5b
       - OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest
+      - ENABLE_RESOURCE_GUARD=true
+      - MAX_SAFE_PAPERS_LIMIT=100
+      - MAX_SAFE_TRIALS_LIMIT=50
       - NCBI_API_KEY=1742f98e7b166a1aa284df7b00c9ae14ba09
       - NCBI_EMAIL=helixmind-research@example.com
       - NCBI_TOOL=helixmind-platform

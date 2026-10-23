@@ -134,6 +134,9 @@ class ResearchReport(BaseModel):
     fda_safety: Optional[Dict[str, Any]] = None
     clinvar_stratification: Optional[Dict[str, Any]] = None
     tme_microenvironment: Optional[Dict[str, Any]] = None
+    investigation_id: Optional[str] = None
+    analyzed_papers: List[Dict[str, Any]] = Field(default_factory=list)
+    token_usage: Dict[str, Any] = Field(default_factory=dict)
 
 
 ResearchReport.model_rebuild()

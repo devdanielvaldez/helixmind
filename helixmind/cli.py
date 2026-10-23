@@ -27,6 +27,7 @@ from helixmind.api import start_server
 from helixmind.autopilot import AutoPilotOrchestrator
 from helixmind.config import get_settings, save_env_variables, update_settings
 from helixmind.copilot import ResearchCopilot
+from helixmind.core.process_manager import get_process_manager
 from helixmind.hypotheses.models import ResearchReport
 from helixmind.insilico import (
     ClinicalSimulator,
@@ -320,6 +321,166 @@ def cmd_investigate(
         )
 
     return report
+
+
+def cmd_start_daemon(
+    topic: str,
+    papers: Optional[int] = None,
+    trials: Optional[int] = None,
+    depth: Optional[str] = None,
+    model: Optional[str] = None,
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    enable_depmap: Optional[bool] = None,
+    enable_pharmacovigilance: Optional[bool] = None,
+    enable_clinvar: Optional[bool] = None,
+    enable_tme: Optional[bool] = None,
+    enable_crispr: Optional[bool] = None,
+    enable_tribunal: Optional[bool] = None,
+) -> None:
+    """Launch an autonomous multi-agent investigation detached in background (PM2-style)."""
+    pm = get_process_manager()
+    mission = pm.start_mission(
+        topic=topic,
+        depth=depth or "deep",
+        papers=papers,
+        trials=trials,
+        model=model,
+        host=host,
+        port=port,
+        enable_depmap=enable_depmap,
+        enable_pharmacovigilance=enable_pharmacovigilance,
+        enable_clinvar=enable_clinvar,
+        enable_tme=enable_tme,
+        enable_crispr=enable_crispr,
+        enable_tribunal=enable_tribunal,
+    )
+
+    inv_id = mission["investigation_id"]
+    pid = mission["pid"]
+    local_url = mission["dashboard_url"]
+    net_url = mission["network_url"]
+    log_file = mission["log_file"]
+
+    card = (
+        f"[bold white]Topic:[/bold white] [bold yellow]{topic}[/bold yellow]\n"
+        f"[bold white]Mission ID:[/bold white] [bold cyan]{inv_id}[/bold cyan]  |  [bold white]Daemon PID:[/bold white] [bold magenta]{pid}[/bold magenta]\n"
+        f"[bold white]Depth:[/bold white] [cyan]{mission['depth'].upper()}[/cyan]  |  [bold white]Model:[/bold white] [magenta]{mission['model']}[/magenta]\n\n"
+        f"[bold green]🌐 Live Interactive War Room Dashboard URL:[/bold green]\n"
+        f"  • [bold]Local Host:[/bold]   [bold cyan]{local_url}[/bold cyan]\n"
+        f"  • [bold]Remote / LAN:[/bold] [bold cyan]{net_url}[/bold cyan]\n\n"
+        f"[bold green]🛡️ SSH SAFE & PM2-EQUIVALENT DETACHED:[/bold green]\n"
+        f"  You can now [bold red]safely close this terminal / SSH connection[/bold red].\n"
+        f"  The investigation will continue running uninhibited in background.\n\n"
+        f"[bold]Useful CLI Controls:[/bold]\n"
+        f"  • [cyan]helixmind ps[/cyan]               List active background tasks & live CPU/RAM/Tokens\n"
+        f"  • [cyan]helixmind logs {inv_id} -f[/cyan]    Stream live terminal logs from background\n"
+        f"  • [cyan]helixmind stop {inv_id}[/cyan]      Stop this background investigation\n"
+        f"  • [dim]tail -f {log_file}[/dim]\n"
+    )
+    console.print(Panel(card, title="🚀 HelixMind Autonomous Mission Started (Background)", border_style="green"))
+
+
+def cmd_ps() -> None:
+    """List all background missions with live PID, hardware load, and token metrics."""
+    pm = get_process_manager()
+    missions = pm.list_missions()
+
+    if not missions:
+        console.print("[dim]No background missions found. Start one with: [bold cyan]helixmind start \"topic\"[/bold cyan][/dim]")
+        return
+
+    table = Table(title="HelixMind Background Missions & Telemetry", border_style="cyan")
+    table.add_column("Mission ID", style="cyan", no_wrap=True)
+    table.add_column("Topic", style="yellow")
+    table.add_column("PID", style="magenta")
+    table.add_column("Status", style="bold")
+    table.add_column("CPU %", style="green")
+    table.add_column("RAM", style="blue")
+    table.add_column("Uptime", style="dim")
+    table.add_column("Dashboard URL", style="cyan")
+
+    for m in missions:
+        st = m.get("status", "unknown").upper()
+        if st == "RUNNING":
+            status_style = "[bold green]RUNNING[/bold green]"
+        elif st == "COMPLETED":
+            status_style = "[bold cyan]COMPLETED[/bold cyan]"
+        elif st == "STOPPED":
+            status_style = "[bold yellow]STOPPED[/bold yellow]"
+        else:
+            status_style = f"[dim]{st}[/dim]"
+
+        cpu_str = f"{m.get('cpu_percent', 0.0):.1f}%" if m.get("is_alive") else "-"
+        ram_str = f"{m.get('memory_mb', 0.0):.1f} MB" if m.get("is_alive") else "-"
+
+        table.add_row(
+            m.get("investigation_id", "-"),
+            m.get("topic", "-")[:35],
+            str(m.get("pid", "-")),
+            status_style,
+            cpu_str,
+            ram_str,
+            m.get("uptime", "-"),
+            m.get("dashboard_url", "-"),
+        )
+
+    console.print(table)
+
+
+def cmd_logs(inv_id_or_pid: str, follow: bool = False, lines: int = 100) -> None:
+    """View or stream live logs from a background investigation."""
+    pm = get_process_manager()
+    mission = pm.get_mission(inv_id_or_pid)
+
+    log_path = None
+    if mission and mission.get("log_file"):
+        log_path = Path(mission["log_file"])
+    else:
+        for candidate in (pm.runs_dir / f"{inv_id_or_pid}.log", pm.runs_dir / f"INV-{inv_id_or_pid}.log"):
+            if candidate.exists():
+                log_path = candidate
+                break
+
+    if not log_path or not log_path.exists():
+        console.print(f"[bold red]Log file for '{inv_id_or_pid}' not found.[/bold red]")
+        return
+
+    if not follow:
+        content = pm.get_logs(inv_id_or_pid, lines=lines)
+        console.print(content)
+        return
+
+    console.print(f"[dim]Streaming logs from {log_path} (Press Ctrl+C to detach)...[/dim]\n")
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            # Print initial chunk
+            f.seek(0, os.SEEK_END)
+            end_pos = f.tell()
+            f.seek(max(0, end_pos - (lines * 120)))
+            for line in f:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            # Follow live
+            while True:
+                line = f.readline()
+                if line:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                else:
+                    time.sleep(0.3)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Detached from log stream. Background task is still running uninhibited.[/dim]")
+
+
+def cmd_stop(inv_id_or_pid: str) -> None:
+    """Stop a running background mission."""
+    pm = get_process_manager()
+    success = pm.stop_mission(inv_id_or_pid)
+    if success:
+        console.print(f"[bold green]✓ Successfully stopped background mission: {inv_id_or_pid}[/bold green]")
+    else:
+        console.print(f"[bold red]Failed to stop mission '{inv_id_or_pid}'. Process not running or not found.[/bold red]")
 
 
 # =============================================================================
@@ -834,8 +995,9 @@ def menu_run_investigation(client: OllamaClient) -> None:
     )
 
     console.print(
-        "  [1] Start Investigation Immediately\n"
-        "  [2] Customize Parameters Before Launch\n"
+        "  [1] Start Investigation in Foreground (Live Terminal)\n"
+        "  [2] Start in Background (PM2-style daemon, safe to disconnect SSH)\n"
+        "  [3] Customize Parameters Before Launch\n"
         "  [0] Cancel & Return\n"
     )
 
@@ -847,8 +1009,9 @@ def menu_run_investigation(client: OllamaClient) -> None:
     trials = settings.default_trials_limit
     depth = settings.default_depth
     model = settings.ollama_default_model
+    run_in_background = (action == "2")
 
-    if action == "2":
+    if action == "3":
         depth = Prompt.ask("Select Depth", choices=["deep", "exhaustive", "institutional"], default=settings.default_depth)
         papers = IntPrompt.ask("Papers count", default=settings.default_literature_limit)
         trials = IntPrompt.ask("Trials count", default=settings.default_trials_limit)
@@ -865,13 +1028,24 @@ def menu_run_investigation(client: OllamaClient) -> None:
         if warning:
             console.print(Panel(warning, border_style="yellow"))
 
-    cmd_investigate(
-        topic=topic,
-        max_papers=papers,
-        max_trials=trials,
-        depth=depth,
-        model=model,
-    )
+        run_in_background = Confirm.ask("Run detached in background (PM2-style daemon)?", default=True)
+
+    if run_in_background:
+        cmd_start_daemon(
+            topic=topic,
+            papers=papers,
+            trials=trials,
+            depth=depth,
+            model=model,
+        )
+    else:
+        cmd_investigate(
+            topic=topic,
+            max_papers=papers,
+            max_trials=trials,
+            depth=depth,
+            model=model,
+        )
 
     Prompt.ask("\n[bold dim]Press Enter to return to main menu[/bold dim]", default="")
 
@@ -1062,6 +1236,7 @@ def interactive_main_menu(client: OllamaClient) -> None:
             "  [bold cyan][5][/bold cyan] 🔬 Standalone In-Silico Molecular & Genomic Suite\n"
             "  [bold cyan][6][/bold cyan] 🩺 System Diagnostics & Biomedical API Health\n"
             "  [bold cyan][7][/bold cyan] 🌐 Start REST & WebSocket API Gateway Server\n"
+            "  [bold cyan][8][/bold cyan] ⚡ Background Missions & Process Manager (PM2-style)\n"
             "  [bold red][0][/bold red] 🚪 Exit\n"
         )
 
@@ -1088,8 +1263,18 @@ def interactive_main_menu(client: OllamaClient) -> None:
             menu_system_diagnostics(client)
         elif choice == "7":
             menu_start_server()
+        elif choice == "8":
+            cmd_ps()
+            console.print("\n[bold]Options:[/bold] [1] Stream logs  [2] Stop a mission  [0] Return")
+            sub = Prompt.ask("Choose", default="0")
+            if sub == "1":
+                inv = Prompt.ask("Enter Investigation ID or PID")
+                cmd_logs(inv, follow=True)
+            elif sub == "2":
+                inv = Prompt.ask("Enter Investigation ID or PID to stop")
+                cmd_stop(inv)
         else:
-            console.print("[yellow]Invalid choice, please select an option from 0 to 7.[/yellow]")
+            console.print("[yellow]Invalid choice, please select an option from 0 to 8.[/yellow]")
 
 
 # =============================================================================
@@ -1175,11 +1360,63 @@ def main() -> None:
     inv_parser.add_argument("--no-crispr", action="store_true", help="Disable CRISPR sgRNA & primer design")
     inv_parser.add_argument("--no-tribunal", action="store_true", help="Disable adversarial peer-review tribunal")
     inv_parser.add_argument(
+        "-d", "--daemon", "--background", "-b",
+        dest="background",
+        action="store_true",
+        help="Run detached in background like PM2 (safe to disconnect SSH session)",
+    )
+    inv_parser.add_argument(
         "--export-formats",
         type=str,
         default=None,
         help="Comma-separated list of formats (markdown, pdf, latex, bibtex)",
     )
+
+    # Command: start (Background daemon like PM2)
+    start_parser = subparsers.add_parser(
+        "start",
+        help="Launch autonomous investigation detached in background (like PM2, safe to disconnect SSH)",
+    )
+    start_parser.add_argument(
+        "topic",
+        type=str,
+        help="Disease, cellular target, or biological topic to investigate",
+    )
+    start_parser.add_argument("--papers", type=int, default=None, help="Max papers to fetch and index")
+    start_parser.add_argument("--trials", type=int, default=None, help="Max clinical trials to fetch")
+    start_parser.add_argument("--depth", type=str, choices=["deep", "exhaustive", "institutional"], default="deep")
+    start_parser.add_argument("-m", "--model", type=str, default=None, help="LLM model override")
+    start_parser.add_argument("--host", type=str, default="0.0.0.0", help="Web server host (default: 0.0.0.0)")
+    start_parser.add_argument("--port", type=int, default=8000, help="Web server port (default: 8000)")
+    start_parser.add_argument("--no-depmap", action="store_true", help="Disable DepMap")
+    start_parser.add_argument("--no-fda", action="store_true", help="Disable openFDA")
+    start_parser.add_argument("--no-clinvar", action="store_true", help="Disable ClinVar")
+    start_parser.add_argument("--no-tme", action="store_true", help="Disable TME")
+    start_parser.add_argument("--no-crispr", action="store_true", help="Disable CRISPR")
+    start_parser.add_argument("--no-tribunal", action="store_true", help="Disable tribunal")
+
+    # Command: ps / list (PM2-style process list)
+    subparsers.add_parser(
+        "ps",
+        aliases=["list"],
+        help="List all background investigations and server status (like 'pm2 ps')",
+    )
+
+    # Command: logs (PM2-style log stream)
+    logs_parser = subparsers.add_parser(
+        "logs",
+        help="View or stream logs from a background investigation (like 'pm2 logs')",
+    )
+    logs_parser.add_argument("id", type=str, help="Investigation ID or Process PID")
+    logs_parser.add_argument("-f", "--follow", action="store_true", help="Follow / stream log output in real-time")
+    logs_parser.add_argument("-n", "--lines", type=int, default=100, help="Number of trailing lines to show")
+
+    # Command: stop (PM2-style stop)
+    stop_parser = subparsers.add_parser(
+        "stop",
+        help="Stop a background investigation process (like 'pm2 stop')",
+    )
+    stop_parser.add_argument("id", type=str, help="Investigation ID or Process PID to terminate")
 
     # Command: copilot (Interactive terminal co-investigator)
     subparsers.add_parser("copilot", help="Launch interactive Dr. Copilot terminal chat session")
@@ -1252,22 +1489,59 @@ def main() -> None:
         cmd_test_embed(client, sample_text=args.text, model=args.model)
     elif args.command == "copilot":
         menu_copilot_chat(client)
-    elif args.command == "investigate":
-        export_fmts = [f.strip() for f in args.export_formats.split(",") if f.strip()] if args.export_formats else None
-        cmd_investigate(
+    elif args.command == "start":
+        cmd_start_daemon(
             topic=args.topic,
-            max_papers=args.papers,
-            max_trials=args.trials,
+            papers=args.papers,
+            trials=args.trials,
             depth=args.depth,
             model=args.model,
+            host=args.host,
+            port=args.port,
             enable_depmap=False if args.no_depmap else None,
             enable_pharmacovigilance=False if args.no_fda else None,
             enable_clinvar=False if args.no_clinvar else None,
             enable_tme=False if args.no_tme else None,
             enable_crispr=False if args.no_crispr else None,
             enable_tribunal=False if args.no_tribunal else None,
-            export_formats=export_fmts,
         )
+    elif args.command in ("ps", "list"):
+        cmd_ps()
+    elif args.command == "logs":
+        cmd_logs(args.id, follow=args.follow, lines=args.lines)
+    elif args.command == "stop":
+        cmd_stop(args.id)
+    elif args.command == "investigate":
+        if getattr(args, "background", False):
+            cmd_start_daemon(
+                topic=args.topic,
+                papers=args.papers,
+                trials=args.trials,
+                depth=args.depth,
+                model=args.model,
+                enable_depmap=False if args.no_depmap else None,
+                enable_pharmacovigilance=False if args.no_fda else None,
+                enable_clinvar=False if args.no_clinvar else None,
+                enable_tme=False if args.no_tme else None,
+                enable_crispr=False if args.no_crispr else None,
+                enable_tribunal=False if args.no_tribunal else None,
+            )
+        else:
+            export_fmts = [f.strip() for f in args.export_formats.split(",") if f.strip()] if args.export_formats else None
+            cmd_investigate(
+                topic=args.topic,
+                max_papers=args.papers,
+                max_trials=args.trials,
+                depth=args.depth,
+                model=args.model,
+                enable_depmap=False if args.no_depmap else None,
+                enable_pharmacovigilance=False if args.no_fda else None,
+                enable_clinvar=False if args.no_clinvar else None,
+                enable_tme=False if args.no_tme else None,
+                enable_crispr=False if args.no_crispr else None,
+                enable_tribunal=False if args.no_tribunal else None,
+                export_formats=export_fmts,
+            )
     elif args.command == "tools":
         if args.tool_name == "depmap":
             run_tool_depmap(args.gene, args.condition)

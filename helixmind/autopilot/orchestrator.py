@@ -112,6 +112,7 @@ class AutoPilotOrchestrator:
         enable_crispr: bool = True,
         enable_tribunal: bool = True,
         export_formats: Optional[List[str]] = None,
+        investigation_id: Optional[str] = None,
     ) -> ResearchReport:
         """Run an autonomous end-to-end investigation on a target condition or topic."""
         # Initialize Host Resource Guard & Sanitize Operational Limits and Model
@@ -132,7 +133,13 @@ class AutoPilotOrchestrator:
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        inv_id = f"INV-{int(datetime.now().timestamp())}"
+        inv_id = (
+            investigation_id
+            or os.environ.get("HELIXMIND_INVESTIGATION_ID")
+            or f"INV-{int(datetime.now().timestamp())}"
+        )
+        from helixmind.core.tokens import get_token_tracker
+        get_token_tracker().set_active_investigation(inv_id)
         slug = "".join([c if c.isalnum() else "_" for c in topic.lower()])[:30].strip("_")
 
         depth_cycles = {
@@ -318,21 +325,31 @@ class AutoPilotOrchestrator:
         console.print(f"  • ClinicalTrials.gov retrieved: [cyan]{len(clinical_trials)}[/cyan] human clinical trials")
         console.print(f"  • Total unique publications indexed: [bold green]{len(deduped_papers)}[/bold green]\n")
 
+        papers_dump = [p.model_dump() for p in deduped_papers]
+        trials_dump = [t.model_dump() for t in clinical_trials]
+
+        reports_dir = self.settings.data_dir / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        papers_file = reports_dir / f"papers_{inv_id}.json"
+        try:
+            with open(papers_file, "w", encoding="utf-8") as pf:
+                json.dump(papers_dump, pf, indent=2)
+        except Exception:
+            pass
+
         await emit(
             EventType.LITERATURE_INGESTED,
             f"Retrieved {len(deduped_papers)} unique papers and {len(clinical_trials)} clinical trials.",
             {
                 "papers_count": len(deduped_papers),
                 "trials_count": len(clinical_trials),
-                "papers": [{"id": p.id, "title": p.title, "year": p.pub_year} for p in deduped_papers[:5]],
-                "trials": [{"id": t.nct_id, "title": t.title, "phase": t.phase} for t in clinical_trials[:5]],
+                "papers": papers_dump,
+                "trials": trials_dump,
             },
         )
         journal.log(librarian.name, "Evidence Curation", f"Curated and validated {len(deduped_papers)} papers and {len(clinical_trials)} clinical trials")
 
         # Save checkpoint to disk
-        reports_dir = self.settings.data_dir / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_file = reports_dir / f"checkpoint_{slug}_{timestamp_str}.json"
         journal.export_json(checkpoint_file)
         console.print(f"[bold cyan]💾 [Storage & Checkpoint][/bold cyan] Literature checkpoint persisted to disk: [green]{checkpoint_file.name}[/green]")
@@ -1320,7 +1337,11 @@ class AutoPilotOrchestrator:
         # 10. Final Report Assembly & Persistence
         # ---------------------------------------------------------------------
         notify("Assembling final scientific investigation report and saving artifacts...")
+        from helixmind.core.tokens import get_token_tracker
+        tokens_info = get_token_tracker().get_metrics(inv_id)
+
         report = ResearchReport(
+            investigation_id=inv_id,
             topic=topic,
             timestamp=timestamp,
             papers_analyzed=len(deduped_papers),
@@ -1338,24 +1359,38 @@ class AutoPilotOrchestrator:
             fda_safety=fda_report.model_dump(),
             clinvar_stratification=clinvar_report.model_dump(),
             tme_microenvironment=tme_report.model_dump(),
+            analyzed_papers=papers_dump,
+            token_usage=tokens_info,
         )
 
         # Persist report, journal, and graph
         reports_dir = self.settings.data_dir / "reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
         report_file = reports_dir / f"report_{slug}_{timestamp_str}.json"
+        inv_report_file = reports_dir / f"report_{inv_id}.json"
         journal_file = reports_dir / f"journal_{slug}_{timestamp_str}.json"
         graph_file = reports_dir / f"graph_{slug}_{timestamp_str}.json"
 
         console.print(f"\n[bold cyan]💾 [Storage & Graph DB][/bold cyan] Persisting {len(knowledge_graph.nodes)} nodes and {len(knowledge_graph.edges)} directed edges to disk: [green]{graph_file.name}[/green]")
         knowledge_graph.export_json(graph_file)
+        try:
+            knowledge_graph.export_json(reports_dir / f"graph_{inv_id}.json")
+        except Exception:
+            pass
 
         console.print(f"[bold cyan]💾 [Research Journal DB][/bold cyan] Persisting {len(journal.entries)} scientific audit logs to disk: [green]{journal_file.name}[/green]")
         journal.export_json(journal_file)
+        try:
+            journal.export_json(reports_dir / f"journal_{inv_id}.json")
+        except Exception:
+            pass
 
         console.print(f"[bold cyan]💾 [Research Report DB][/bold cyan] Serializing comprehensive multi-agent report to disk: [green]{report_file.name}[/green]")
+        report_json_str = report.model_dump_json(indent=2)
         with open(report_file, "w", encoding="utf-8") as f:
-            f.write(report.model_dump_json(indent=2))
+            f.write(report_json_str)
+        with open(inv_report_file, "w", encoding="utf-8") as f:
+            f.write(report_json_str)
 
         console.rule("[bold green]Scientific Investigation Artifacts Saved[/bold green]")
         artifacts_card = (
@@ -1380,6 +1415,7 @@ class AutoPilotOrchestrator:
                 "papers_analyzed": len(deduped_papers),
                 "clinical_trials_analyzed": len(clinical_trials),
                 "hypotheses_count": len(verified_hypotheses),
+                "token_usage": tokens_info,
             },
         )
         return report
