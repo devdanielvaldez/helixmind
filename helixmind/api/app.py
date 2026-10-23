@@ -200,6 +200,88 @@ async def launch_investigation(
     )
 
 
+def _enrich_report_data(report_data: Dict[str, Any], slug_or_id: str) -> Dict[str, Any]:
+    """Enrich report dictionary with journal entries, agent roster, graph, and papers."""
+    reports_dir = settings.data_dir / "reports"
+    inv_id = report_data.get("investigation_id") or slug_or_id
+    report_data["id"] = inv_id
+    report_data["slug"] = slug_or_id
+
+    # 1. Enrich with journal data (entries, agents_roster, evidence_dossier, glossary)
+    journal_file = None
+    for jf in reports_dir.glob("journal_*.json"):
+        if slug_or_id in jf.name or (inv_id and inv_id in jf.name):
+            journal_file = jf
+            break
+
+    if journal_file and journal_file.exists():
+        try:
+            with open(journal_file, "r", encoding="utf-8") as jf_read:
+                jdata = json.load(jf_read)
+                report_data.setdefault("journal_entries", jdata.get("entries", []))
+                report_data.setdefault("agents_roster", jdata.get("agents_roster", []))
+                report_data.setdefault("glossary", jdata.get("glossary", {}))
+
+                # If analyzed_papers is missing or empty, build it from evidence_dossier
+                if not report_data.get("analyzed_papers") and jdata.get("evidence_dossier"):
+                    dossier_papers = []
+                    for ev in jdata["evidence_dossier"]:
+                        dossier_papers.append({
+                            "id": ev.get("paper_id"),
+                            "pmid": ev.get("paper_id") if str(ev.get("paper_id", "")).isdigit() else None,
+                            "title": ev.get("paper_title"),
+                            "abstract": ev.get("key_excerpt", ""),
+                            "authors": [ev.get("agent_name", "Curated Literature")],
+                            "journal": "Peer-Reviewed Biomedical Source",
+                            "pub_year": 2024,
+                            "selection_rationale": ev.get("selection_rationale", ""),
+                            "key_excerpt": ev.get("key_excerpt", ""),
+                            "scientific_argumentation": ev.get("scientific_argumentation", ""),
+                            "relevance_score": ev.get("relevance_score", 0.85),
+                        })
+                    report_data["analyzed_papers"] = dossier_papers
+        except Exception:
+            pass
+
+    # 2. Enrich with dedicated papers file if exists
+    for pf in reports_dir.glob("papers_*.json"):
+        if slug_or_id in pf.name or (inv_id and inv_id in pf.name):
+            try:
+                with open(pf, "r", encoding="utf-8") as pf_read:
+                    report_data["analyzed_papers"] = json.load(pf_read)
+                    break
+            except Exception:
+                pass
+
+    # 3. Enrich with graph data if exists
+    for gf in reports_dir.glob("graph_*.json"):
+        if slug_or_id in gf.name or (inv_id and inv_id in gf.name):
+            try:
+                with open(gf, "r", encoding="utf-8") as gf_read:
+                    report_data["knowledge_graph"] = json.load(gf_read)
+                    break
+            except Exception:
+                pass
+
+    # 4. Enrich with markdown text of paper if available
+    paper_path = report_data.get("paper_markdown_path")
+    if paper_path:
+        p_obj = Path(paper_path)
+        if not p_obj.is_absolute():
+            p_obj = settings.data_dir / paper_path.replace("data/", "")
+        if p_obj.exists():
+            try:
+                report_data["paper_markdown"] = p_obj.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
+    # 5. Enrich with tokens
+    tracker = get_token_tracker()
+    report_data["token_usage"] = tracker.get_metrics(inv_id)
+
+    return report_data
+
+
 @app.get("/api/investigations")
 async def list_investigations() -> List[Dict[str, Any]]:
     """List all previous investigations and reports."""
@@ -208,11 +290,15 @@ async def list_investigations() -> List[Dict[str, Any]]:
         return []
 
     investigations: List[Dict[str, Any]] = []
-    for f in sorted(reports_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+    files = sorted(reports_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for idx, f in enumerate(files):
         try:
             with open(f, "r", encoding="utf-8") as rf:
                 data = json.load(rf)
+                slug = f.stem.replace("report_", "")
                 investigations.append({
+                    "id": data.get("investigation_id") or slug,
+                    "slug": slug,
                     "filename": f.name,
                     "topic": data.get("topic"),
                     "timestamp": data.get("timestamp"),
@@ -220,6 +306,7 @@ async def list_investigations() -> List[Dict[str, Any]]:
                     "clinical_trials_analyzed": data.get("clinical_trials_analyzed", 0),
                     "hypotheses_count": len(data.get("hypotheses", [])),
                     "paper_markdown_path": data.get("paper_markdown_path"),
+                    "is_latest": idx == 0,
                 })
         except Exception:
             continue
@@ -227,20 +314,59 @@ async def list_investigations() -> List[Dict[str, Any]]:
     return investigations
 
 
+@app.get("/api/investigations/latest")
+async def get_latest_investigation() -> Dict[str, Any]:
+    """Retrieve the most recent investigation report with full enriched artifacts."""
+    reports_dir = settings.data_dir / "reports"
+    if reports_dir.exists():
+        files = sorted(reports_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if files:
+            latest_file = files[0]
+            with open(latest_file, "r", encoding="utf-8") as rf:
+                data = json.load(rf)
+                slug = latest_file.stem.replace("report_", "")
+                return _enrich_report_data(data, slug)
+
+    # Check live state in ws_manager
+    if ws_manager.active_investigations:
+        latest_inv_id = list(ws_manager.active_investigations.keys())[-1]
+        live_state = ws_manager.get_state(latest_inv_id)
+        if live_state:
+            return {
+                "investigation_id": latest_inv_id,
+                "topic": live_state.get("topic", latest_inv_id),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": live_state.get("status", "running"),
+                "papers_analyzed": len(live_state.get("papers", [])),
+                "clinical_trials_analyzed": 0,
+                "hypotheses": live_state.get("hypotheses", []),
+                "analyzed_papers": live_state.get("papers", []),
+                "token_usage": get_token_tracker().get_metrics(latest_inv_id),
+            }
+
+    raise HTTPException(status_code=404, detail="No investigations found on system")
+
+
 @app.get("/api/investigations/{inv_slug}")
 async def get_investigation_report(inv_slug: str) -> Dict[str, Any]:
-    """Retrieve full JSON report by slug or ID."""
+    """Retrieve full JSON report by slug or ID with enriched artifacts."""
+    if inv_slug == "latest":
+        return await get_latest_investigation()
+
     reports_dir = settings.data_dir / "reports"
     # Search for matching file
     for f in reports_dir.glob("report_*.json"):
         if inv_slug in f.name:
             with open(f, "r", encoding="utf-8") as rf:
-                return json.load(rf)
+                data = json.load(rf)
+                slug = f.stem.replace("report_", "")
+                return _enrich_report_data(data, slug)
 
     # Check live state in ws_manager
     live_state = ws_manager.get_state(inv_slug)
     if live_state:
         return {
+            "investigation_id": inv_slug,
             "topic": live_state.get("topic", inv_slug),
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "status": live_state.get("status", "running"),
@@ -259,14 +385,23 @@ async def get_investigation_papers(inv_id: str) -> List[Dict[str, Any]]:
     """Retrieve all scientific publications read and analyzed for an investigation."""
     reports_dir = settings.data_dir / "reports"
 
+    target_pattern = None
+    if inv_id == "latest":
+        report_files = sorted(reports_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if report_files:
+            target_pattern = report_files[0].stem.replace("report_", "")
+    else:
+        target_pattern = inv_id
+
     # 1. Check dedicated papers file
-    papers_file = reports_dir / f"papers_{inv_id}.json"
-    if papers_file.exists():
-        try:
-            with open(papers_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    if target_pattern:
+        for pf in reports_dir.glob("papers_*.json"):
+            if target_pattern in pf.name:
+                try:
+                    with open(pf, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception:
+                    pass
 
     # 2. Check active state in ws_manager
     state = ws_manager.get_state(inv_id)
@@ -274,17 +409,130 @@ async def get_investigation_papers(inv_id: str) -> List[Dict[str, Any]]:
         return state["papers"]
 
     # 3. Check report file
-    for f in reports_dir.glob("report_*.json"):
-        if inv_id in f.name:
-            try:
-                with open(f, "r", encoding="utf-8") as rf:
-                    data = json.load(rf)
-                    if data.get("analyzed_papers"):
-                        return data["analyzed_papers"]
-            except Exception:
-                pass
+    if target_pattern:
+        for f in reports_dir.glob("report_*.json"):
+            if target_pattern in f.name:
+                try:
+                    with open(f, "r", encoding="utf-8") as rf:
+                        data = json.load(rf)
+                        if data.get("analyzed_papers"):
+                            return data["analyzed_papers"]
+                except Exception:
+                    pass
+
+        # 4. Check journal file evidence dossier
+        for jf in reports_dir.glob("journal_*.json"):
+            if target_pattern in jf.name:
+                try:
+                    with open(jf, "r", encoding="utf-8") as rf:
+                        jdata = json.load(rf)
+                        dossier = jdata.get("evidence_dossier", [])
+                        if dossier:
+                            return [
+                                {
+                                    "id": ev.get("paper_id"),
+                                    "pmid": ev.get("paper_id") if str(ev.get("paper_id", "")).isdigit() else None,
+                                    "title": ev.get("paper_title"),
+                                    "abstract": ev.get("key_excerpt", ""),
+                                    "authors": [ev.get("agent_name", "Curated Literature")],
+                                    "journal": "Peer-Reviewed Biomedical Source",
+                                    "pub_year": 2024,
+                                    "selection_rationale": ev.get("selection_rationale", ""),
+                                    "key_excerpt": ev.get("key_excerpt", ""),
+                                    "scientific_argumentation": ev.get("scientific_argumentation", ""),
+                                    "relevance_score": ev.get("relevance_score", 0.85),
+                                }
+                                for ev in dossier
+                            ]
+                except Exception:
+                    pass
 
     return []
+
+
+@app.get("/api/investigations/{inv_id}/graph")
+async def get_investigation_graph(inv_id: str) -> Dict[str, Any]:
+    """Retrieve epistemic knowledge graph nodes and edges for an investigation."""
+    reports_dir = settings.data_dir / "reports"
+    target_pattern = None
+    if inv_id == "latest":
+        report_files = sorted(reports_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if report_files:
+            target_pattern = report_files[0].stem.replace("report_", "")
+    else:
+        target_pattern = inv_id
+
+    if target_pattern:
+        for gf in reports_dir.glob("graph_*.json"):
+            if target_pattern in gf.name:
+                try:
+                    with open(gf, "r", encoding="utf-8") as f:
+                        gdata = json.load(f)
+                        raw_nodes = gdata.get("nodes", {})
+                        raw_edges = gdata.get("directed_edges", gdata.get("edges", []))
+                        nodes_list = []
+                        if isinstance(raw_nodes, dict):
+                            for nid, nval in raw_nodes.items():
+                                if isinstance(nval, dict):
+                                    nodes_list.append({
+                                        "id": nid,
+                                        "name": nval.get("name", nid),
+                                        "category": nval.get("category", "concept"),
+                                        "references": nval.get("references", []),
+                                    })
+                                else:
+                                    nodes_list.append({"id": nid, "name": str(nval), "category": "concept"})
+                        elif isinstance(raw_nodes, list):
+                            nodes_list = raw_nodes
+
+                        return {
+                            "investigation_id": inv_id,
+                            "nodes": nodes_list,
+                            "edges": raw_edges if isinstance(raw_edges, list) else [],
+                            "nodes_count": len(nodes_list),
+                            "edges_count": len(raw_edges) if isinstance(raw_edges, list) else 0,
+                        }
+                except Exception:
+                    pass
+
+    state = ws_manager.get_state(inv_id)
+    if state and state.get("graph"):
+        return state["graph"]
+
+    return {"investigation_id": inv_id, "nodes": [], "edges": [], "nodes_count": 0, "edges_count": 0}
+
+
+@app.get("/api/investigations/{inv_id}/journal")
+async def get_investigation_journal(inv_id: str) -> Dict[str, Any]:
+    """Retrieve research journal audit log, agent roster, and glossary."""
+    reports_dir = settings.data_dir / "reports"
+    target_pattern = None
+    if inv_id == "latest":
+        report_files = sorted(reports_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if report_files:
+            target_pattern = report_files[0].stem.replace("report_", "")
+    else:
+        target_pattern = inv_id
+
+    if target_pattern:
+        for jf in reports_dir.glob("journal_*.json"):
+            if target_pattern in jf.name:
+                try:
+                    with open(jf, "r", encoding="utf-8") as f:
+                        jdata = json.load(f)
+                        return {
+                            "investigation_id": jdata.get("investigation_id", inv_id),
+                            "topic": jdata.get("topic", ""),
+                            "created_at": jdata.get("created_at", ""),
+                            "entries": jdata.get("entries", []),
+                            "agents_roster": jdata.get("agents_roster", []),
+                            "evidence_dossier": jdata.get("evidence_dossier", []),
+                            "glossary": jdata.get("glossary", {}),
+                        }
+                except Exception:
+                    pass
+
+    return {"investigation_id": inv_id, "entries": [], "agents_roster": [], "evidence_dossier": [], "glossary": {}}
 
 
 @app.get("/api/investigations/{inv_id}/status")

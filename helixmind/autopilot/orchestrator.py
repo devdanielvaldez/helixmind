@@ -378,6 +378,22 @@ class AutoPilotOrchestrator:
                     paper_text += f"\n[dim italic]Abstract: \"{clean_abs}\"[/dim italic]"
                 console.print(Panel(paper_text, border_style="dim green"))
 
+                await emit(
+                    EventType.STATUS_LOG,
+                    f"Reading publication [{idx}/{len(deduped_papers)}]: {p.title}",
+                    {
+                        "activity": "reading_paper",
+                        "paper_index": idx,
+                        "total_papers": len(deduped_papers),
+                        "paper": p.model_dump(),
+                        "pmid": p.pmid or p.id,
+                        "title": p.title,
+                        "journal": p.journal or "",
+                        "pub_year": p.pub_year,
+                        "abstract": p.abstract or "",
+                    },
+                )
+
         # Live display of clinical trials being evaluated with summaries
         if clinical_trials:
             console.rule("[bold cyan]Evaluating Human Clinical Trials (ClinicalTrials.gov)[/bold cyan]")
@@ -395,6 +411,19 @@ class AutoPilotOrchestrator:
                     clean_sum = t.brief_summary.strip()[:260].replace("\n", " ") + ("..." if len(t.brief_summary) > 260 else "")
                     trial_text += f"\n[dim italic]Trial Protocol Summary: \"{clean_sum}\"[/dim italic]"
                 console.print(Panel(trial_text, border_style="dim cyan"))
+
+                await emit(
+                    EventType.STATUS_LOG,
+                    f"Evaluating clinical trial [{idx}/{len(clinical_trials)}]: {t.title} ({t.nct_id})",
+                    {
+                        "activity": "evaluating_trial",
+                        "trial_index": idx,
+                        "total_trials": len(clinical_trials),
+                        "trial": t.model_dump(),
+                        "nct_id": t.nct_id,
+                        "title": t.title,
+                    },
+                )
 
         # Mine biological annotations for top papers
         console.rule("[bold magenta]Mining Molecular Entities & Targets from Scientific Text[/bold magenta]")
@@ -949,6 +978,11 @@ class AutoPilotOrchestrator:
             depmap_table.add_column("Functional Actionability", style="white")
 
             for tgt in targets_to_check:
+                await emit(
+                    EventType.STATUS_LOG,
+                    f"Querying DepMap Chronos dependency score for target: {tgt}",
+                    {"activity": "depmap_query", "gene": tgt},
+                )
                 dep_res = await depmap_verifier.verify_gene_essentiality_async(tgt, target_condition=strategy.primary_condition)
                 depmap_evals.append(dep_res)
                 tier_color = "red" if "ESSENTIAL" in dep_res.essentiality_tier else "cyan"
@@ -995,6 +1029,11 @@ class AutoPilotOrchestrator:
                 model=pv_agent.model,
                 task_instruction=f"Query FAERS registry for post-marketing toxicities associated with: '{candidate_parent}'",
                 color="blue",
+            )
+            await emit(
+                EventType.STATUS_LOG,
+                f"Surveilling openFDA FAERS human adverse reaction reports for: {candidate_parent}",
+                {"activity": "fda_query", "drug": candidate_parent},
             )
             fda_client = FDAPharmacovigilance()
             fda_report = await fda_client.fetch_safety_profile_async(candidate_parent)
@@ -1047,6 +1086,11 @@ class AutoPilotOrchestrator:
                 model=clinvar_agent.model,
                 task_instruction=f"Query NCBI ClinVar for verified pathogenic alterations in {targets_to_check[0]}",
                 color="blue",
+            )
+            await emit(
+                EventType.STATUS_LOG,
+                f"Stratifying NCBI ClinVar pathogenic variants for target: {targets_to_check[0]}",
+                {"activity": "clinvar_query", "gene": targets_to_check[0]},
             )
             clinvar_stratifier = ClinVarStratifier()
             clinvar_report = await clinvar_stratifier.stratify_target_async(targets_to_check[0], target_condition=strategy.primary_condition)
@@ -1104,6 +1148,11 @@ class AutoPilotOrchestrator:
                 model=tme_agent.model,
                 task_instruction=f"Map cellular interactome and stromal immunosuppression index for: {', '.join(targets_to_check)}",
                 color="magenta",
+            )
+            await emit(
+                EventType.STATUS_LOG,
+                f"Mapping single-cell tumor microenvironment for: {', '.join(targets_to_check)}",
+                {"activity": "tme_query", "targets": targets_to_check},
             )
             tme_report = TMEMapper.analyze_microenvironment(targets_to_check, condition=strategy.primary_condition)
 

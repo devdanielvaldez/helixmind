@@ -86,8 +86,25 @@ class ConnectionManager:
             st["events_count"] += 1
             st["last_message"] = message
 
+            if data and "activity" in data:
+                st["current_activity"] = {
+                    "activity": data.get("activity"),
+                    "message": message,
+                    "title": data.get("title", ""),
+                    "pmid": data.get("pmid"),
+                    "paper": data.get("paper"),
+                    "index": data.get("paper_index") or data.get("trial_index"),
+                    "total": data.get("total_papers") or data.get("total_trials"),
+                    "timestamp": payload.timestamp,
+                }
+
             if event_type == EventType.INVESTIGATION_COMPLETED:
                 st["status"] = "completed"
+                st["current_activity"] = {
+                    "activity": "completed",
+                    "message": "Investigation completed. All artifacts saved.",
+                    "timestamp": payload.timestamp,
+                }
             elif event_type == EventType.INVESTIGATION_ERROR:
                 st["status"] = "error"
             elif event_type == EventType.LITERATURE_INGESTED and data:
