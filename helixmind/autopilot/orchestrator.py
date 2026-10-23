@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 from typing import Callable, List, Optional
 from rich.console import Console

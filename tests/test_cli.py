@@ -88,3 +88,12 @@ def test_cli_background_commands():
 
     with patch.object(sys, "argv", ["helixmind", "stop", "NONEXISTENT"]):
         main()
+
+
+def test_investigation_id_env():
+    import os
+    from helixmind.autopilot.orchestrator import AutoPilotOrchestrator
+    os.environ["HELIXMIND_INVESTIGATION_ID"] = "INV-TEST-ENV-123"
+    orchestrator = AutoPilotOrchestrator()
+    assert orchestrator is not None
+    os.environ.pop("HELIXMIND_INVESTIGATION_ID", None)
